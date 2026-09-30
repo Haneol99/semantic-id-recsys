@@ -18,6 +18,11 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def get_device() -> torch.device:
+    """MPS if available, else CPU (spec §7)."""
+    return torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
+
 def load_config(path: str | Path) -> dict:
     return yaml.safe_load(Path(path).read_text())
 
@@ -32,15 +37,20 @@ def git_hash() -> str:
     return head + ("-dirty" if head and dirty else "")
 
 
-def save_run(out_dir: Path, config: dict, results: dict[str, tuple[dict, dict]], bootstrap: dict) -> dict:
+def save_run(
+    out_dir: Path, config: dict, results: dict[str, tuple[dict, dict]], bootstrap: dict, extra: dict | None = None
+) -> dict:
     """Write config.yaml, metrics.json and <split>_<metric>.npy for each evaluated split.
 
     results: {split: (mean_metrics, per_user_arrays)} as returned by recsys.eval.evaluator.evaluate.
+    extra: optional run info (e.g. device, best epoch, timings) stored under metrics.json["run_info"].
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
     metrics = {"run_name": config["run_name"], "seed": config["seed"], "git_hash": git_hash(), "splits": {}}
+    if extra:
+        metrics["run_info"] = extra
     for split, (means, per_user) in results.items():
         for name, arr in per_user.items():
             np.save(out_dir / f"{split}_{name.replace('@', '')}.npy", arr)
