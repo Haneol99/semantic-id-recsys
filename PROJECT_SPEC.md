@@ -62,12 +62,13 @@ Owner deadline: submit Google applications by ~2026-10-13 (hard stop: referral e
 
 Targets: our SASRec **(BCE)** within roughly ±15% of the paper; if outside, investigate preprocessing/eval before moving on. SASRec (CE) is expected to exceed the paper's SASRec, since it uses a stronger loss than the original.
 
-Status (Phase 1, test): SASRec (BCE) is −7% to −8% vs paper on shuffled ties and −7% to −9% on original order, so the check passes. SASRec (CE) on shuffled ties scores R@10 0.0842 / N@10 0.0496, above the paper's TIGER too. TIGER is therefore compared against **both** SASRec variants, and the write-up must report honestly where TIGER stands relative to SASRec (CE).
+Status (Phase 1, test): SASRec (BCE) on shuffled ties is −6.6% to −8.4% vs paper for seed 42 and −10.5% to −12.4% for the 3-seed mean (seeds 42–44); on original order (seed 42 only) −7.3% to −9.2%. The check passes. SASRec (CE) on shuffled ties scores R@10 0.0859 ± 0.0015 / N@10 0.0503 ± 0.0006 (3 seeds), above the paper's TIGER too. TIGER is therefore compared against **both** SASRec variants, and the write-up must report honestly where TIGER stands relative to SASRec (CE).
 
 ## 6. Analysis (Phase 4)
 
 - 95% bootstrap CIs over users (>= 1,000 resamples) for each metric and for paired differences between models.
 - Item-frequency buckets (e.g., test items with <=5, 6–20, >20 train interactions) — compare SASRec vs TIGER per bucket.
+  - Test targets that never appear in any train sequence (64 users on shuffled ties; 138 on original order) have 0 train interactions and go in the <=5 bucket. SASRec never sees those items as a positive or as an input (they get gradient only as negatives).
 - Cold-start experiment: hold out ~5% of test items from training (paper Sec. 4.3); report retrieval of unseen items.
 - Semantic-ID quality: category purity per first code; visualization.
 

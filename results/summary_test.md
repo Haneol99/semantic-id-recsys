@@ -1,5 +1,7 @@
 ### test — mean [95% bootstrap CI over 22,363 users]
 
+> Sensitivity check only. Original raw-file order: same-day items are in ASIN (= item ID) order, so on all 9,719 same-day valid/test pairs the test item has the higher ID. These numbers carry that ASIN-order artifact.
+
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|
 | popularity | 0.0075 [0.0064, 0.0085] | 0.0041 [0.0035, 0.0048] | 0.0114 [0.0101, 0.0127] | 0.0054 [0.0047, 0.0061] |
@@ -7,7 +9,7 @@
 | sasrec_bce | 0.0359 [0.0334, 0.0383] | 0.0228 [0.0212, 0.0245] | 0.0550 [0.0523, 0.0579] | 0.0290 [0.0273, 0.0306] |
 | *paper sasrec* | 0.0387 | 0.0249 | 0.0605 | 0.0318 |
 
-Relative to paper sasrec:
+Relative to paper sasrec (single runs above):
 
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|
@@ -15,7 +17,7 @@ Relative to paper sasrec:
 | sasrec | +64.0% | +82.5% | +48.3% | +69.5% |
 | sasrec_bce | -7.3% | -8.3% | -9.2% | -9.0% |
 
-Paired difference a − b: mean [95% CI] (share of resamples with diff ≤ 0):
+Paired difference a − b (paired by user): mean [95% CI] (fraction of resamples with diff ≤ 0):
 
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|

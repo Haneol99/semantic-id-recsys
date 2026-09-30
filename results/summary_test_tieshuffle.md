@@ -1,5 +1,7 @@
 ### test — mean [95% bootstrap CI over 22,363 users]
 
+> Main dataset: same-day ties shuffled (tie-seed 0). CIs and pairs are from the seed-42 runs.
+
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|
 | popularity_tieshuffle | 0.0095 [0.0082, 0.0107] | 0.0057 [0.0049, 0.0065] | 0.0155 [0.0138, 0.0171] | 0.0076 [0.0067, 0.0085] |
@@ -7,7 +9,14 @@
 | sasrec_bce_tieshuffle | 0.0355 [0.0332, 0.0378] | 0.0231 [0.0215, 0.0249] | 0.0559 [0.0529, 0.0591] | 0.0297 [0.0280, 0.0316] |
 | *paper sasrec* | 0.0387 | 0.0249 | 0.0605 | 0.0318 |
 
-Relative to paper sasrec:
+Across training seeds: mean ± std (sample std, ddof=1). SASRec training on MPS is not bit-for-bit deterministic; seed variation covers that noise.
+
+| Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
+|---|---|---|---|---|
+| sasrec_tieshuffle (seeds 42, 43, 44) | 0.0601 ± 0.0010 | 0.0420 ± 0.0003 | 0.0859 ± 0.0015 | 0.0503 ± 0.0006 |
+| sasrec_bce_tieshuffle (seeds 42, 43, 44) | 0.0339 ± 0.0014 | 0.0220 ± 0.0009 | 0.0539 ± 0.0017 | 0.0285 ± 0.0011 |
+
+Relative to paper sasrec (single runs above):
 
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|
@@ -15,7 +24,7 @@ Relative to paper sasrec:
 | sasrec_tieshuffle | +53.9% | +67.5% | +39.1% | +56.0% |
 | sasrec_bce_tieshuffle | -8.4% | -7.1% | -7.6% | -6.6% |
 
-Paired difference a − b: mean [95% CI] (share of resamples with diff ≤ 0):
+Paired difference a − b (paired by user): mean [95% CI] (fraction of resamples with diff ≤ 0):
 
 | Run | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 |
 |---|---|---|---|---|

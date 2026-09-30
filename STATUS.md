@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (next)
+Phase 1 — Foundation (done, review fixes applied); Phase 2 — Semantic IDs (next)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -25,10 +25,18 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (next)
   - MPS: 4.7 s/epoch train (mean), 0.6 s/valid eval; stopped at epoch 30, best epoch 20; total 158 s. Commit 8d37597 (clean). Test evaluated once.
   - **Outside ±15% of paper — on the high side** (test R@10 +48%, N@10 +70%). Not tuned; waiting on owner decision (see Open Issues).
 - **1-D diagnostics (a)+(b) (2026-09-30, owner-approved):** `loss: bce` option (original SASRec: 1 negative per position, uniform over items not in the user's train seq, resampled each epoch); `preprocess --tie-seed` (per-user seeded shuffle of same-timestamp reviews) → `data/processed_tieshuffle/` (same counts; 6,554 test / 9,377 valid targets change; default output verified byte-identical). `compare_runs.py` now takes `--paper`, `--pairs a:b`, `--out` and refuses to pair runs on different data. Commit 6c167b5; 26 tests pass.
-  - **Loss explains the gap:** SASRec-BCE is −7% to −9% vs paper (original ties) and −7% to −8% (shuffled ties) — within ±15%. CE − BCE (paired, original data): R@10 +0.0348 [+0.0315, +0.0382], N@10 +0.0249 [+0.0229, +0.0270].
-  - **Tie order is a smaller effect:** CE SASRec test R@10 0.0897 → 0.0842, N@10 0.0539 → 0.0496 with shuffled ties (unpaired; CIs overlap). BCE unchanged within noise. Popularity rises (R@10 0.0114 → 0.0155).
+  - **Loss explains the gap:** SASRec-BCE (seed 42) is −7.3% to −9.2% vs paper (original ties) and −6.6% to −8.4% (shuffled ties); 3-seed mean on shuffled ties −10.5% to −12.4% — within ±15%. CE − BCE (paired, original data): R@10 +0.0348 [+0.0315, +0.0382], N@10 +0.0249 [+0.0229, +0.0270].
+  - **Tie order (paired by user ID, seed 42, `results/summary_test_tieorder.md`):** shuffled − original for CE SASRec: R@10 −0.0056 [−0.0093, −0.0021], N@10 −0.0043 [−0.0066, −0.0021], so shuffling significantly lowers CE. (An earlier note here read overlapping unpaired CIs as "no difference". That reading was wrong.) BCE: R@10 +0.0009 [−0.0025, +0.0043], N@10 +0.0008 [−0.0014, +0.0027]: no detectable effect. Popularity rises: R@10 +0.0041 [+0.0026, +0.0054]. Single training seed per side: the CE drop (0.0056) is ~4× the CE seed std (0.0015).
   - Timing (MPS): BCE 2.7 s/epoch, best epoch 44/54 (188 s) orig, 58/68 (239 s) shuffled; CE shuffled 4.7 s/epoch, best 16/26 (138 s).
   - Tables: `results/summary_test.md` (original ties), `results/summary_test_tieshuffle.md` (shuffled ties).
+- **Review fixes (2026-09-30):** code at commit 6abbed4; 31 tests pass.
+  - `train_sasrec.py --seeds` trains one run per seed. The config's seed keeps `run_name`, other seeds write `<run>_seed<N>`, and finished runs with an identical config are skipped. The seed-42 shuffled runs were kept (config unchanged).
+  - **MPS training is not bit-for-bit deterministic:** the same seed and commit gave a different loss from epoch 1 (6th decimal). Retrained `sasrec_tieshuffle` went best epoch 16 → 18, test R@10 0.0842 → 0.0855; `sasrec` R@10 0.0897 → 0.0906. So report mean ± std across seeds 42/43/44; that seed variation covers the nondeterminism. A rerun reproduces numbers only up to this noise. Popularity and the data files are exactly reproducible (verified byte-identical).
+  - New seed runs (MPS): CE 131 s / 117 s (best epoch 16 of 26 both); BCE 168 s / 173 s (best 45/55, 42/52).
+  - `metrics.json` now records `data.sha256` for every processed data file. The 6 earlier runs were backfilled (`data.backfilled`), after checking that every data file was last modified before each run finished. The backfill happened before `data/processed/stats.json` was regenerated with current code (adds `"tie_order": "raw_file"`; the other 4 files are byte-identical). Its checksum therefore differs from the backfilled one, while `splits.json` (used for pairing) is unchanged.
+  - `compare_runs.py`: same data = same resolved `data_dir` and same `splits.json` SHA-256. `--cross-data` pairs by user ID (checks `user2reviewer` match). `--seeds` adds a mean ± std table, and `--note` adds a note. The paired column is renamed `frac_resamples_diff_le_0` (was `p_diff_le_0`; it is not a p-value).
+  - The evaluator raises if a target is in its masked history. The last epoch is always evaluated, so a checkpoint exists even when `eval_every > max_epochs`. New tests cover the shuffled dataset (same items and timestamps per user as original, no split overlap).
+  - `scripts/reproduce.sh` has the exact commands for every run and all 3 summary tables. `requirements.txt` is pinned to the installed versions.
 
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
@@ -38,14 +46,20 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (next)
 | sasrec | valid | 0.0832 | 0.0603 | 0.1137 | 0.0701 | best epoch 20 (early-stop metric) |
 | sasrec | test | 0.0635 [0.0606, 0.0666] | 0.0454 [0.0433, 0.0478] | 0.0897 [0.0863, 0.0935] | 0.0539 [0.0516, 0.0564] | commit 8d37597; +48–83% vs paper |
 | sasrec − popularity | test | +0.0560 [+0.0529, +0.0591] | +0.0413 [+0.0391, +0.0436] | +0.0783 [+0.0745, +0.0824] | +0.0485 [+0.0460, +0.0510] | paired bootstrap |
-| sasrec_bce | test | 0.0359 [0.0334, 0.0383] | 0.0228 [0.0212, 0.0245] | 0.0550 [0.0523, 0.0579] | 0.0290 [0.0273, 0.0306] | original loss; −7…−9% vs paper; commit 6c167b5 |
+| sasrec_bce | test | 0.0359 [0.0334, 0.0383] | 0.0228 [0.0212, 0.0245] | 0.0550 [0.0523, 0.0579] | 0.0290 [0.0273, 0.0306] | original loss; −7.3…−9.2% vs paper; commit 6c167b5 |
 | popularity_tieshuffle | test | 0.0095 [0.0082, 0.0107] | 0.0057 [0.0049, 0.0065] | 0.0155 [0.0138, 0.0171] | 0.0076 [0.0067, 0.0085] | shuffled same-day ties |
 | sasrec_tieshuffle | test | 0.0596 [0.0565, 0.0626] | 0.0417 [0.0394, 0.0441] | 0.0842 [0.0808, 0.0878] | 0.0496 [0.0472, 0.0521] | shuffled ties, CE |
-| sasrec_bce_tieshuffle | test | 0.0355 [0.0332, 0.0378] | 0.0231 [0.0215, 0.0249] | 0.0559 [0.0529, 0.0591] | 0.0297 [0.0280, 0.0316] | shuffled ties, BCE; −7…−8% vs paper |
+| sasrec_bce_tieshuffle | test | 0.0355 [0.0332, 0.0378] | 0.0231 [0.0215, 0.0249] | 0.0559 [0.0529, 0.0591] | 0.0297 [0.0280, 0.0316] | shuffled ties, BCE, seed 42; −6.6…−8.4% vs paper |
+| **sasrec_tieshuffle ×3** | test | 0.0601 ± 0.0010 | 0.0420 ± 0.0003 | 0.0859 ± 0.0015 | 0.0503 ± 0.0006 | **main CE baseline**; seeds 42/43/44, mean ± std (ddof=1) |
+| **sasrec_bce_tieshuffle ×3** | test | 0.0339 ± 0.0014 | 0.0220 ± 0.0009 | 0.0539 ± 0.0017 | 0.0285 ± 0.0011 | **paper check**; seeds 42/43/44; −10.5…−12.4% vs paper (within ±15%) |
 | *paper SASRec* | test | 0.0387 | 0.0249 | 0.0605 | 0.0318 | reference |
 | *paper TIGER* | test | 0.0454 | 0.0321 | 0.0648 | 0.0384 | reference |
 
 ## Open Issues / Decisions
+- **Original-order results carry the ASIN-order artifact.** In raw-file order, same-day items are in ASIN (= item ID) order: on all 9,719 same-day valid/test pairs the test item has the higher ID (4,760 / 9,719 with shuffled ties). Treat `popularity`, `sasrec` and `sasrec_bce` and `results/summary_test.md` as a sensitivity check only; the table is labeled.
+- **The main-dataset switch was decided after seeing test numbers.** The reason is sound (raw-file order is an ASIN artifact), but the switch lowered SASRec-CE (R@10 −0.0056, paired), the baseline TIGER is compared against. The README must say this.
+- **Only the shuffled-ties SASRec runs have 3 seeds.** Original-order runs are seed 42 only. The saved config of `sasrec` lacks `loss: ce` (added later; same default), so `train_sasrec.py` would retrain it rather than skip.
+- **Phase 4 bucket note:** 64 test targets (shuffled ties; 138 on original order) never appear in any train sequence. They have 0 train interactions and go in the <=5 bucket (also in PROJECT_SPEC §6).
 - **Timestamp ties — superseded (owner, 2026-09-30):** first decided to keep raw-file order; after finding the raw file is ASIN-sorted, the main dataset switched to shuffled ties (see above). README must explain both. (9,719 / 22,363 users have tied valid/test timestamps under raw order.)
 - **SASRec gap — RESOLVED (owner, 2026-09-30):** cause is the loss (full CE vs original BCE). Decisions: (1) report both — SASRec-BCE = paper-reproduction check, SASRec-CE = main strong baseline; (2) main dataset = shuffled ties (`data/processed_tieshuffle`, tie-seed 0), original ASIN order kept as sensitivity check; TIGER on shuffled ties first, on original order only if time allows. PROJECT_SPEC §2, §4, §5 updated. Earlier read-only diagnostics:
   - Same-day valid/test users (43.5%): SASRec test R@10 0.1260 / N@10 0.0802 vs different-day 0.0618 / 0.0336 (different-day subgroup is close to the paper). The raw 5-core file is sorted by ASIN, so same-day items are in ASIN order.
@@ -54,7 +68,7 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (next)
   - Ruled out: exact score ties at target (0 in 2,000 valid users), repeated items (0), test used for selection (no).
 - Main-dataset configs are the `*_tieshuffle.yaml` files (`popularity_tieshuffle`, `sasrec_tieshuffle` = CE main baseline, `sasrec_bce_tieshuffle` = paper check); the un-suffixed configs are the original-order sensitivity runs.
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
-- `requirements.txt` is unpinned; versions above are what was installed. Pin before the final README if exact reproducibility is needed.
 
 ## Next Step
+- Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
 - Phase 2 (Semantic IDs) on the main dataset: item text → Sentence-T5 embeddings → RQ-VAE → Semantic IDs, with a code-quality check. Main comparison table: `results/summary_test_tieshuffle.md`.
