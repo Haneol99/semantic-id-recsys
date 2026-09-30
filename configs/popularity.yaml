@@ -1,0 +1,9 @@
+run_name: popularity
+seed: 42
+data_dir: data/processed
+results_dir: results
+splits: [valid, test]
+ks: [5, 10]
+bootstrap:
+  n_resamples: 1000
+  seed: 0
