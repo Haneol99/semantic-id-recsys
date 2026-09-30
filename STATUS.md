@@ -20,17 +20,30 @@ Phase 1 — Foundation (in progress)
   - Inputs: valid → train items; test → train + valid item. Popularity counts use train positions only (both splits).
   - Bootstrap: 1,000 resamples, seed 0, percentile 95% CI; paired-difference CI helper ready.
   - Run output `results/popularity/`: config.yaml, metrics.json (means + CIs, seed 42, git hash), per-user `{split}_{rank,recall5,recall10,ndcg5,ndcg10}.npy`. Produced at commit 5d3b881 (clean).
+- **1-D SASRec (2026-09-30):** `src/recsys/models/sasrec.py`, `src/recsys/train/sasrec_trainer.py`, `scripts/train_sasrec.py`, `configs/sasrec.yaml`, `scripts/compare_runs.py` (writes `results/summary_<split>.md`), `tests/test_sasrec.py` (23 tests pass in total).
+  - 2 blocks, hidden 64, 1 head, dropout 0.2, max_len 50, learned positions; full-softmax CE at every position; Adam lr 1e-3, betas (0.9, 0.98), batch 256; early stop on valid NDCG@10, patience 10. 828,288 params.
+  - MPS: 4.7 s/epoch train (mean), 0.6 s/valid eval; stopped at epoch 30, best epoch 20; total 158 s. Commit 8d37597 (clean). Test evaluated once.
+  - **Outside ±15% of paper — on the high side** (test R@10 +48%, N@10 +70%). Not tuned; waiting on owner decision (see Open Issues).
 
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
 | popularity | valid | 0.0091 [0.0079, 0.0103] | 0.0056 [0.0048, 0.0065] | 0.0163 [0.0146, 0.0179] | 0.0079 [0.0071, 0.0088] | 22,363 users, 95% bootstrap CI |
 | popularity | test | 0.0075 [0.0064, 0.0085] | 0.0041 [0.0035, 0.0048] | 0.0114 [0.0101, 0.0127] | 0.0054 [0.0047, 0.0061] | commit 5d3b881 |
+| sasrec | valid | 0.0832 | 0.0603 | 0.1137 | 0.0701 | best epoch 20 (early-stop metric) |
+| sasrec | test | 0.0635 [0.0606, 0.0666] | 0.0454 [0.0433, 0.0478] | 0.0897 [0.0863, 0.0935] | 0.0539 [0.0516, 0.0564] | commit 8d37597; +48–83% vs paper |
+| sasrec − popularity | test | +0.0560 [+0.0529, +0.0591] | +0.0413 [+0.0391, +0.0436] | +0.0783 [+0.0745, +0.0824] | +0.0485 [+0.0460, +0.0510] | paired bootstrap |
+| *paper SASRec* | test | 0.0387 | 0.0249 | 0.0605 | 0.0318 | reference |
 
 ## Open Issues / Decisions
 - **Timestamp ties — decided (owner, 2026-09-30):** keep raw-file order for same-day items; note in README. (9,719 / 22,363 users have tied valid/test timestamps.)
+- **SASRec above paper — OPEN, needs owner decision.** Diagnostics (read-only; test not re-evaluated):
+  - Same-day valid/test users (43.5%): SASRec test R@10 0.1260 / N@10 0.0802 vs different-day 0.0618 / 0.0336 (different-day subgroup is close to the paper). The raw 5-core file is sorted by ASIN, so same-day items are in ASIN order.
+  - History masking (valid): N@10 0.0701 masked vs 0.0519 unmasked; R@10 0.1137 vs 0.1037.
+  - Loss: full-softmax CE vs original SASRec's BCE with one sampled negative (not yet measured).
+  - Ruled out: exact score ties at target (0 in 2,000 valid users), repeated items (0), test used for selection (no).
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
 - `requirements.txt` is unpinned; versions above are what was installed. Pin before the final README if exact reproducibility is needed.
 
 ## Next Step
-- Phase 1-D: SASRec (max_len 50, CE over all items) trained with valid-based model selection; target within ±15% of paper (R@10 0.0605, N@10 0.0318).
+- Owner decides how to handle the SASRec gap (loss, same-day ordering, masking); then finish Phase 1 or go to Phase 2 (Semantic IDs).
