@@ -63,3 +63,36 @@ def evaluate_score_matrix(scores, histories, targets, ks=KS, batch_size: int = 1
     """Same as `evaluate`, for a precomputed (num_users x N+1) score matrix (numpy or torch)."""
     scores = torch.as_tensor(scores)
     return evaluate(lambda u: scores[torch.as_tensor(u)], histories, targets, ks, batch_size)
+
+
+MISS_RANK = 1_000_000_000  # rank stored for a target that is not in a model's ranked list
+
+
+def filter_ranked(items: np.ndarray, histories: Sequence[Sequence[int]], top_k: int) -> list[list[int]]:
+    """Per row: drop invalid (<= 0) and history items from a ranked candidate list, keep the first top_k."""
+    out = []
+    for row, hist in zip(items, histories, strict=True):
+        seen = set(hist)
+        out.append([int(i) for i in row if i > 0 and i not in seen][:top_k])
+    return out
+
+
+def evaluate_ranked_lists(
+    ranked: Sequence[Sequence[int]], histories: Sequence[Sequence[int]], targets: Sequence[int], ks=KS
+) -> tuple[dict[str, float], dict[str, np.ndarray]]:
+    """Metrics for models that return a ranked list instead of full scores (e.g. beam search).
+
+    rank = 0-based position of the target in the list, MISS_RANK if absent, so a target outside the list is a
+    miss even when the list is shorter than K. Lists must not contain history items (same masking as `evaluate`).
+    """
+    ranks = np.full(len(targets), MISS_RANK, dtype=np.int64)
+    for u, (lst, hist, t) in enumerate(zip(ranked, histories, targets, strict=True)):
+        if t in hist:
+            raise ValueError(f"target is in the input history for row {u}")
+        if not set(lst).isdisjoint(hist):
+            raise ValueError(f"ranked list contains history items for row {u}")
+        if t in lst:
+            ranks[u] = lst.index(t)
+    per_user = {"rank": ranks, **per_user_metrics(ranks, ks)}
+    means = {name: float(arr.mean()) for name, arr in per_user.items() if name != "rank"}
+    return means, per_user
