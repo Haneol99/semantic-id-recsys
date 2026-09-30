@@ -82,3 +82,16 @@ def test_codes_within_codebook(sids):
     k = sids["codebook_size"]
     assert k == 256
     assert all(0 <= c < k for s in sids["item_to_sid"].values() for c in s)
+
+
+def test_dead_code_reset_revives_unused_codes_and_standardization():
+    torch.manual_seed(0)
+    x = torch.randn(300, 16) * 0.01 + 5.0
+    model = RQVAE(input_dim=16, hidden_dims=(12, 8), latent_dim=4, levels=2, codebook_size=8)
+    model.set_input_standardization(x)
+    assert torch.allclose(((x - model.input_mean) / model.input_std).mean(0), torch.zeros(16), atol=1e-4)
+    model.quantizer.codebooks.data[:] = 100.0  # all codes identical and far away: only code 0 is used
+    model.quantizer.codebooks.data[:, 0] = 0.0
+    n_reset = model.reset_dead_codes(x, torch.Generator().manual_seed(0))
+    assert n_reset[0] == 7
+    assert codebook_usage(model.encode_codes(x).numpy(), 8)[0] > 1 / 8

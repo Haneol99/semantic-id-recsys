@@ -1,7 +1,10 @@
 """Train the RQ-VAE on all item embeddings, then assign Semantic IDs (3 codes + collision token).
 
-Trains on content embeddings of all 12,101 items (no interactions, so no split leakage). Stops at max_epochs or
-when neither reconstruction loss nor min codebook usage has made progress for `patience` evals.
+Trains on content embeddings of all 12,101 items (no interactions, so no split leakage).
+
+Schedule: dead codes are reset every `reset_every` epochs up to epoch `reset_until` (0 = never). Final assignments
+come from at least `stable_epochs` epochs without resets; after that, training stops at max_epochs or when
+neither reconstruction loss nor min codebook usage has made progress for `patience` evals.
 
 Writes results/rqvae/{config.yaml, model.pt, train_log.json, metrics.json} and the semantic_ids_path JSON.
 
@@ -55,7 +58,13 @@ def main() -> None:
     model = RQVAE(**config["model"]).to(device)
     k = config["model"]["codebook_size"]
     gen = torch.Generator().manual_seed(seed)
-    opt = torch.optim.Adagrad(model.parameters(), lr=cfg["lr"])
+    if config.get("input_norm", "none") == "standardize":
+        model.set_input_standardization(x)
+    opt = {"adagrad": torch.optim.Adagrad, "adamw": torch.optim.AdamW}[cfg["optimizer"]](
+        model.parameters(), lr=cfg["lr"], weight_decay=cfg.get("weight_decay", 0.0))
+    reset_every, reset_until = cfg.get("reset_every", 0), cfg.get("reset_until", 0)
+    stop_allowed_from = reset_until + cfg.get("stable_epochs", 0)
+    resets_per_level = [0] * config["model"]["levels"]
     print(f"device {device}  items {len(x):,}  params {sum(p.numel() for p in model.parameters()):,}")
 
     log, best_recon, best_usage, since_progress = [], float("inf"), -1.0, 0
@@ -71,18 +80,24 @@ def main() -> None:
             loss.backward()
             opt.step()
             total += loss.item()
+        n_reset = None
+        if reset_every and epoch <= reset_until and epoch % reset_every == 0:
+            n_reset = model.reset_dead_codes(x, gen)
+            resets_per_level = [a + b for a, b in zip(resets_per_level, n_reset)]
 
         if epoch == 1 or epoch % cfg["eval_every"] == 0 or epoch == cfg["max_epochs"]:
             ev = full_eval(model, x, k)
-            entry = {"epoch": epoch, "sec": round(time.perf_counter() - start, 1), **ev}
+            entry = {"epoch": epoch, "sec": round(time.perf_counter() - start, 1), **ev,
+                     "resets_so_far": list(resets_per_level)}
             log.append(entry)
             print(f"epoch {epoch:5d}  recon {ev['recon_loss']:.3e}  rq {ev['rq_loss']:.3e}  usage "
                   + "/".join(f"{u:.2f}" for u in ev["usage"])
-                  + f"  collision {ev['collision_rate']:.4f}  ({entry['sec']:.0f}s)", flush=True)
+                  + f"  collision {ev['collision_rate']:.4f}  resets {resets_per_level}  ({entry['sec']:.0f}s)",
+                  flush=True)
             progress = ev["recon_loss"] < best_recon * (1 - cfg["min_rel_improvement"]) or min(ev["usage"]) > best_usage
             best_recon, best_usage = min(best_recon, ev["recon_loss"]), max(best_usage, min(ev["usage"]))
             since_progress = 0 if progress else since_progress + 1
-            if since_progress >= cfg["patience"]:
+            if epoch >= stop_allowed_from and since_progress >= cfg["patience"]:
                 print(f"plateau: no progress for {cfg['patience']} evals")
                 break
 
@@ -102,7 +117,8 @@ def main() -> None:
     metrics = {
         "run_name": config["run_name"], "seed": seed, "git_hash": git_hash(), "device": str(device),
         "data": {"emb_path": config["emb_path"], "sha256": file_sha256(config["emb_path"])},
-        "epochs_run": final["epoch"], "total_sec": round(time.perf_counter() - start, 1),
+        "epochs_run": final["epoch"], "optimizer": cfg["optimizer"], "input_norm": config.get("input_norm", "none"),
+        "dead_code_resets_per_level": resets_per_level, "last_reset_epoch": min(reset_until, final["epoch"]), "total_sec": round(time.perf_counter() - start, 1),
         "recon_loss": final["recon_loss"], "rq_loss": final["rq_loss"],
         "codebook_usage": usage, "passes_usage_80": all(u >= 0.8 for u in usage),
         **collision_stats(codes),

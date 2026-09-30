@@ -9,6 +9,11 @@ Loss = MSE(x_hat, x) + sum_d [ MSE(sg(r_d), e_{c_d}) + beta * MSE(r_d, sg(e_{c_d
 
 Codebooks are initialized with k-means on the first training batch, level by level (level d on that batch's
 residuals r_d after levels < d are initialized).
+
+Deviations from the paper, both optional (see configs/rqvae.yaml vs configs/rqvae_paper.yaml):
+- input standardization: x is standardized per dimension with stored mean/std before the encoder, and the
+  reconstruction target is the standardized x (unit-norm Sentence-T5 vectors otherwise collapse to one code);
+- dead-code reset: `reset_dead_codes` moves every unused code at each level onto a random current residual.
 """
 
 from collections.abc import Sequence
@@ -60,6 +65,22 @@ class ResidualQuantizer(nn.Module):
         return torch.stack(codes, 1), quantized, (codebook_loss, commit_loss)
 
     @torch.no_grad()
+    def reset_dead_codes(self, z: torch.Tensor, generator: torch.Generator) -> list[int]:
+        """Per level, move codes no row of z maps to onto randomly chosen residuals; returns #reset per level."""
+        residual, n_reset = z.detach(), []
+        k = self.codebooks.shape[1]
+        for d in range(self.levels):
+            idx = self.nearest(residual, self.codebooks[d])
+            dead = (torch.bincount(idx, minlength=k) == 0).nonzero().squeeze(1)
+            if len(dead):
+                pick = torch.randperm(len(residual), generator=generator)[: len(dead)].to(residual.device)
+                self.codebooks.data[d, dead] = residual[pick]
+                idx = self.nearest(residual, self.codebooks[d])
+            residual = residual - self.codebooks[d][idx]
+            n_reset.append(int(len(dead)))
+        return n_reset
+
+    @torch.no_grad()
     def kmeans_init(self, z: torch.Tensor, seed: int) -> None:
         residual = z.detach().cpu().numpy().astype(np.float64)
         k = self.codebooks.shape[1]
@@ -78,8 +99,17 @@ class RQVAE(nn.Module):
         self.encoder = mlp([input_dim, *hidden_dims, latent_dim])
         self.decoder = mlp([latent_dim, *reversed(hidden_dims), input_dim])
         self.quantizer = ResidualQuantizer(levels, codebook_size, latent_dim)
+        self.register_buffer("input_mean", torch.zeros(input_dim))
+        self.register_buffer("input_std", torch.ones(input_dim))
+
+    @torch.no_grad()
+    def set_input_standardization(self, x: torch.Tensor) -> None:
+        """Standardize inputs per dimension with these statistics (identity by default)."""
+        self.input_mean.copy_(x.mean(0))
+        self.input_std.copy_(x.std(0).clamp_min(1e-8))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        x = (x - self.input_mean) / self.input_std
         z = self.encoder(x)
         codes, quantized, (codebook_loss, commit_loss) = self.quantizer(z)
         x_hat = self.decoder(z + (quantized - z).detach())
@@ -87,11 +117,18 @@ class RQVAE(nn.Module):
         rq_loss = codebook_loss + self.beta * commit_loss
         return {"codes": codes, "loss": recon_loss + rq_loss, "recon_loss": recon_loss, "rq_loss": rq_loss}
 
+    def latent(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder((x - self.input_mean) / self.input_std)
+
     @torch.no_grad()
     def kmeans_init(self, x: torch.Tensor, seed: int) -> None:
-        self.quantizer.kmeans_init(self.encoder(x), seed)
+        self.quantizer.kmeans_init(self.latent(x), seed)
+
+    @torch.no_grad()
+    def reset_dead_codes(self, x: torch.Tensor, generator: torch.Generator) -> list[int]:
+        return self.quantizer.reset_dead_codes(self.latent(x), generator)
 
     @torch.no_grad()
     def encode_codes(self, x: torch.Tensor, batch_size: int = 4096) -> torch.Tensor:
         """Codes (N, levels) for every row of x."""
-        return torch.cat([self.quantizer(self.encoder(x[i:i + batch_size]))[0] for i in range(0, len(x), batch_size)])
+        return torch.cat([self.quantizer(self.latent(x[i:i + batch_size]))[0] for i in range(0, len(x), batch_size)])

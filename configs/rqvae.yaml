@@ -3,7 +3,9 @@ seed: 42
 emb_path: data/processed/item_emb.npy  # Sentence-T5 item embeddings, row = item ID (row 0 = padding, unused)
 results_dir: results
 semantic_ids_path: data/processed/semantic_ids.json  # item IDs are identical in data/processed_tieshuffle
-device: cpu  # small MLP: CPU is deterministic (MPS is not) and not slower here
+device: cpu  # small MLP: CPU is deterministic (MPS is not) and faster here
+# Deviation from the paper: per-dimension standardization. With raw unit-norm embeddings every setup collapsed.
+input_norm: standardize
 
 model:
   input_dim: 768
@@ -14,10 +16,14 @@ model:
   beta: 0.25
 
 train:
-  optimizer: adagrad  # as in the TIGER paper
-  lr: 0.4
+  optimizer: adamw  # deviation: paper uses Adagrad lr 0.4 (collapses here, see configs/rqvae_paper.yaml)
+  lr: 0.001
+  weight_decay: 0.01
   batch_size: 1024
-  max_epochs: 20000  # paper; stop earlier on plateau
+  max_epochs: 5000  # deviation: paper trains 20k epochs; we stop on plateau
+  reset_every: 10  # deviation: dead-code reset (epochs between resets)
+  reset_until: 2000  # last epoch with a reset
+  stable_epochs: 1000  # epochs without resets before the run may stop; final codes come from this phase
   eval_every: 100  # epochs between full-data evals (recon loss, usage, collisions)
-  patience: 10  # evals without progress before stopping
+  patience: 5  # evals without progress before stopping (only after reset_until + stable_epochs)
   min_rel_improvement: 0.01  # progress = recon loss below best * (1 - this), or higher min codebook usage

@@ -1,0 +1,30 @@
+# TIGER paper settings, kept for reference. Collapses to a single code on our unit-norm Sentence-T5
+# embeddings (usage 0.00/0.00/0.00 after epoch 1); see STATUS.md.
+run_name: rqvae_paper
+seed: 42
+emb_path: data/processed/item_emb.npy
+results_dir: results
+semantic_ids_path: results/rqvae_paper/semantic_ids.json  # never the main Semantic IDs
+device: cpu
+input_norm: none
+
+model:
+  input_dim: 768
+  hidden_dims: [512, 256, 128]
+  latent_dim: 32
+  levels: 3
+  codebook_size: 256
+  beta: 0.25
+
+train:
+  optimizer: adagrad
+  lr: 0.4
+  weight_decay: 0.0
+  batch_size: 1024
+  max_epochs: 20000
+  reset_every: 0  # no dead-code reset
+  reset_until: 0
+  stable_epochs: 0
+  eval_every: 100
+  patience: 10
+  min_rel_improvement: 0.01
