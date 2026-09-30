@@ -57,12 +57,12 @@ def plot(codes: np.ndarray, labels: np.ndarray, cats: list[str], path: Path, obs
     ax.set_xlabel(f"First Semantic ID code ({len(code_ids)} used), grouped by dominant category")
     ax.set_ylabel("Items")
     ax.set_title(f"Category mix per first code: item-weighted purity {observed:.3f} vs random {rand:.3f}",
-                 loc="left", fontsize=11)
+                 loc="left", fontsize=11, pad=22)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
     ax.grid(axis="y", color="#e4e3dc", linewidth=0.6)
     ax.set_axisbelow(True)
-    ax.legend(ncol=len(cats), frameon=False, loc="upper right", fontsize=8)
+    ax.legend(ncol=len(cats), frameon=False, loc="lower right", bbox_to_anchor=(1.0, 1.0), fontsize=8)
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)

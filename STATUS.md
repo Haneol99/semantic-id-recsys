@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done, review fixes applied); Phase 2 — Semantic IDs (next)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (next)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -38,6 +38,18 @@ Phase 1 — Foundation (done, review fixes applied); Phase 2 — Semantic IDs (n
   - The evaluator raises if a target is in its masked history. The last epoch is always evaluated, so a checkpoint exists even when `eval_every > max_epochs`. New tests cover the shuffled dataset (same items and timestamps per user as original, no split overlap).
   - `scripts/reproduce.sh` has the exact commands for every run and all 3 summary tables. `requirements.txt` is pinned to the installed versions.
 
+- **Phase 2 Semantic IDs (2026-09-30):**
+  - Code: `src/recsys/data/item_text.py`, `src/recsys/data/semantic_ids.py`, `src/recsys/models/rqvae.py`, `scripts/embed_items.py`, `scripts/train_rqvae.py`, `scripts/semantic_id_report.py`, `configs/rqvae.yaml`, `configs/rqvae_paper.yaml`, `tests/test_semantic_ids.py`. 40 tests pass. Run at commit 5feaee3 (clean).
+  - **Item text:** one sentence per item, e.g. `Title: … Price: $3.50. Brand: Maybelline. Categories: Beauty > Makeup > Lips > Lip Stains.` Missing fields are skipped and HTML entities unescaped.
+  - **Embeddings:** `sentence-transformers/sentence-t5-base` on MPS gives `data/processed/item_emb.npy` (12,102 × 768; row 0 = zeros), unit-norm rows. Metadata and SHA-256 are in `item_emb.json`.
+  - **The paper's RQ-VAE settings collapse on these embeddings.** With Adagrad lr 0.4 all items map to one code after epoch 1 (usage 0.00/0.00/0.00, recon 8e6). In short diagnostics (150–300 epochs), raw input collapsed under every optimizer tried (Adagrad 0.4/0.05/0.01, AdamW 1e-3), each settling at recon 2.07e-4, the MSE of predicting the mean embedding. Standardized input + AdamW 1e-3 reached usage 0.33/1.00/1.00; adding a dead-code reset fixed level 1. Owner chose this fix (2026-09-30).
+  - **RQ-VAE run** (`configs/rqvae.yaml`, seed 42, CPU): 3,000 epochs in 625 s. Dead-code resets happened every 10 epochs up to epoch 2,000: 240 / 41 / 21 codes reset in total at levels 1 / 2 / 3, all within the first 100 epochs (none from epoch 100 to 2,000, although resets were still enabled). The final 1,000 epochs had no resets. Plateau stop at epoch 3,000. Final recon MSE 0.360 (standardized space), RQ loss 0.407.
+  - **Semantic IDs** (`data/processed/semantic_ids.json`; item_to_sid plus reverse sid_to_item; item IDs are identical in `data/processed_tieshuffle`):
+    - codebook usage 1.00 / 1.00 / 1.00, so the ≥80% pass criterion is met;
+    - 11,816 unique 3-code prefixes; max collision group 9 (4th token ≤ 8);
+    - 2.36% of items (285) need a non-zero 4th token.
+  - **Quality** (`results/rqvae/quality.json`, `results/rqvae/first_code_categories.png`, cf. paper Fig. 4a): category = second level of the first category path, because the first level is "Beauty" for every item. First-code purity is 0.915 item-weighted (0.908 mean over codes) vs 0.344 ± 0.002 for random assignment (100 shuffles, same code sizes); the largest category is 31.5% of items.
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
@@ -56,6 +68,14 @@ Phase 1 — Foundation (done, review fixes applied); Phase 2 — Semantic IDs (n
 | *paper TIGER* | test | 0.0454 | 0.0321 | 0.0648 | 0.0384 | reference |
 
 ## Open Issues / Decisions
+- **Deviations from the TIGER paper (README must list these):**
+  1. *Input standardization* (per dimension, mean/std over all 12,101 items, stored in the model): raw unit-norm Sentence-T5 vectors collapse the RQ-VAE to a single code. The reconstruction loss is measured in standardized space.
+  2. *AdamW lr 1e-3, weight decay 0.01* instead of Adagrad lr 0.4: every Adagrad setting tried collapsed (see Phase 2 above).
+  3. *Dead-code reset*: every 10 epochs until epoch 2,000, unused codes at each level move onto random current residuals (240 / 41 / 21 resets in total), followed by ≥1,000 epochs without resets. Final assignments come from this reset-free phase.
+  4. *Early stop*: 3,000 epochs (plateau: 5 evals without 1% recon gain or higher min usage) instead of 20k.
+  - Not deviations, but choices the paper leaves open: MSE averaged over dimensions for the reconstruction and RQ terms; CPU training (deterministic); 4th token assigned 0, 1, 2, … in item-ID order within a collision group; purity uses the second category level. The paper settings remain runnable as `configs/rqvae_paper.yaml` (collapses).
+- `data/processed` now also holds `item_emb.{npy,json}` and `semantic_ids.json`, so runs from now on record more files in `data.sha256`. Pairing uses `splits.json`, which is unchanged. Phase 3 reads Semantic IDs from `data/processed/semantic_ids.json` for the shuffled-ties runs too (same item IDs).
+- `results/rqvae/` (model, log, chart) is gitignored like other run outputs; copy the chart into the README assets in Phase 5.
 - **Original-order results carry the ASIN-order artifact.** In raw-file order, same-day items are in ASIN (= item ID) order: on all 9,719 same-day valid/test pairs the test item has the higher ID (4,760 / 9,719 with shuffled ties). Treat `popularity`, `sasrec` and `sasrec_bce` and `results/summary_test.md` as a sensitivity check only; the table is labeled.
 - **The main-dataset switch was decided after seeing test numbers.** The reason is sound (raw-file order is an ASIN artifact), but the switch lowered SASRec-CE (R@10 −0.0056, paired), the baseline TIGER is compared against. The README must say this.
 - **Only the shuffled-ties SASRec runs have 3 seeds.** Original-order runs are seed 42 only. The saved config of `sasrec` lacks `loss: ce` (added later; same default), so `train_sasrec.py` would retrain it rather than skip.
@@ -71,4 +91,4 @@ Phase 1 — Foundation (done, review fixes applied); Phase 2 — Semantic IDs (n
 
 ## Next Step
 - Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
-- Phase 2 (Semantic IDs) on the main dataset: item text → Sentence-T5 embeddings → RQ-VAE → Semantic IDs, with a code-quality check. Main comparison table: `results/summary_test_tieshuffle.md`.
+- Phase 3 (TIGER seq2seq + beam search) on the main dataset (shuffled ties) with `data/processed/semantic_ids.json`. Main comparison table: `results/summary_test_tieshuffle.md`.
