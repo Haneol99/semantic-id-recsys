@@ -1,0 +1,70 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from recsys.data.preprocess import MIN_INTERACTIONS, build_item_map, build_sequences, leave_one_out
+
+PROCESSED = Path(__file__).resolve().parents[1] / "data" / "processed"
+
+
+# ---------- unit tests on synthetic data ----------
+
+def test_sequences_sorted_by_time_and_filtered():
+    reviews = [("u1", f"a{i}", 10 - i) for i in range(5)] + [("u2", "a0", 1)] * 4
+    seqs = build_sequences(reviews)
+    assert set(seqs) == {"u1"}  # u2 has only 4 interactions
+    assert [ts for _, ts in seqs["u1"]] == [6, 7, 8, 9, 10]
+
+
+def test_item_map_is_asin_sorted_not_first_appearance():
+    seqs = {"u": [("zzz", 1), ("aaa", 2), ("mmm", 3)]}
+    assert build_item_map(seqs) == {"aaa": 1, "mmm": 2, "zzz": 3}
+
+
+def test_leave_one_out_synthetic():
+    assert leave_one_out([1, 2, 3, 4, 5]) == ([1, 2, 3], 4, 5)
+
+
+# ---------- checks on the real processed data ----------
+
+@pytest.fixture(scope="module")
+def processed():
+    if not (PROCESSED / "splits.json").exists():
+        pytest.skip("data/processed not found; run `python -m recsys.data.preprocess`")
+    load = lambda name: json.loads((PROCESSED / name).read_text())
+    return load("sequences.json"), load("splits.json"), load("id_maps.json"), load("item_meta.json")
+
+
+def test_no_user_below_min_interactions(processed):
+    seqs = processed[0]["items"]
+    assert min(len(s) for s in seqs) >= MIN_INTERACTIONS
+
+
+def test_test_item_is_last_item(processed):
+    seqs, splits = processed[0]["items"], processed[1]
+    assert all(t == s[-1] for s, t in zip(seqs, splits["test"], strict=True))
+
+
+def test_split_positions_do_not_overlap(processed):
+    seqs, splits = processed[0]["items"], processed[1]
+    for seq, train, valid, test in zip(seqs, splits["train"], splits["valid"], splits["test"], strict=True):
+        # train = positions [0, n-2), valid = n-2, test = n-1; together they are exactly the sequence
+        assert len(train) == len(seq) - 2
+        assert train + [valid, test] == seq
+
+
+def test_timestamps_non_decreasing(processed):
+    for ts in processed[0]["timestamps"]:
+        assert all(a <= b for a, b in zip(ts, ts[1:]))
+
+
+def test_item_ids_contiguous_and_asin_sorted(processed):
+    sequences, _, id_maps, item_meta = processed
+    seqs = sequences["items"]
+    item2asin = id_maps["item2asin"]
+    used = {i for s in seqs for i in s}
+    assert used == set(range(1, len(item2asin)))  # 1..N, 0 reserved for padding
+    assert item2asin[0] is None
+    assert item2asin[1:] == sorted(item2asin[1:])
+    assert set(item_meta) == {str(i) for i in used}
