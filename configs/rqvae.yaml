@@ -1,0 +1,23 @@
+run_name: rqvae
+seed: 42
+emb_path: data/processed/item_emb.npy  # Sentence-T5 item embeddings, row = item ID (row 0 = padding, unused)
+results_dir: results
+semantic_ids_path: data/processed/semantic_ids.json  # item IDs are identical in data/processed_tieshuffle
+device: cpu  # small MLP: CPU is deterministic (MPS is not) and not slower here
+
+model:
+  input_dim: 768
+  hidden_dims: [512, 256, 128]
+  latent_dim: 32
+  levels: 3
+  codebook_size: 256
+  beta: 0.25
+
+train:
+  optimizer: adagrad  # as in the TIGER paper
+  lr: 0.4
+  batch_size: 1024
+  max_epochs: 20000  # paper; stop earlier on plateau
+  eval_every: 100  # epochs between full-data evals (recon loss, usage, collisions)
+  patience: 10  # evals without progress before stopping
+  min_rel_improvement: 0.01  # progress = recon loss below best * (1 - this), or higher min codebook usage
