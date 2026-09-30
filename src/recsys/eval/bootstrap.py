@@ -24,7 +24,7 @@ def paired_bootstrap_ci(a, b, n_resamples: int = N_RESAMPLES, alpha: float = 0.0
     if a.shape != b.shape:
         raise ValueError(f"paired arrays must have the same shape, got {a.shape} and {b.shape}")
     out = bootstrap_ci(a - b, n_resamples, alpha, seed)
-    out["p_diff_le_0"] = float(
+    out["frac_resamples_diff_le_0"] = float(
         ((a - b)[_resample_idx(len(a), n_resamples, seed)].mean(axis=1) <= 0).mean()
     )
     return out

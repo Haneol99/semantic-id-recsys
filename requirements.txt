@@ -1,8 +1,9 @@
-torch
-numpy
-pandas
-pyyaml
-tqdm
-pytest
-scikit-learn
-matplotlib
+# Versions installed in the `recsys` conda env (Python 3.11.16, macOS arm64) that produced the recorded results.
+torch==2.14.0
+numpy==2.4.6
+pandas==3.0.6
+pyyaml==6.0.3
+tqdm==4.70.1
+pytest==9.1.1
+scikit-learn==1.9.1
+matplotlib==3.11.2

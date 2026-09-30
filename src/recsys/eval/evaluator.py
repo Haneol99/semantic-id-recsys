@@ -17,7 +17,13 @@ ScoreFn = Callable[[np.ndarray], torch.Tensor]  # user_ids (B,) -> scores (B, N+
 
 
 def target_ranks(scores: torch.Tensor, histories: Sequence[Sequence[int]], targets: torch.Tensor) -> torch.Tensor:
-    """Mask padding + history in place and return the 0-based rank of each target."""
+    """Mask padding + history in place and return the 0-based rank of each target.
+
+    Raises ValueError if a target is in its own input history: masking would hide it.
+    """
+    in_history = [i for i, (h, t) in enumerate(zip(histories, targets.tolist())) if t in h]
+    if in_history:
+        raise ValueError(f"target is in the masked input history for {len(in_history)} row(s), e.g. row {in_history[0]}")
     scores = scores.float()
     scores[:, 0] = -torch.inf
     rows = torch.cat([torch.full((len(h),), i, dtype=torch.long) for i, h in enumerate(histories)])

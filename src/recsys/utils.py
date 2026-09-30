@@ -1,5 +1,6 @@
-"""Helpers shared by run scripts: seeding, config loading, and writing results/<run_name>/."""
+"""Helpers shared by run scripts: seeding, config loading, data checksums, and writing results/<run_name>/."""
 
+import hashlib
 import json
 import random
 import subprocess
@@ -37,6 +38,32 @@ def git_hash() -> str:
     return head + ("-dirty" if head and dirty else "")
 
 
+def file_sha256(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def data_checksums(data_dir: str | Path) -> dict[str, str]:
+    """SHA-256 of every processed data file (*.json) in data_dir, keyed by file name."""
+    return {p.name: file_sha256(p) for p in sorted(Path(data_dir).glob("*.json"))}
+
+
+def seed_run_config(config: dict, seed: int) -> dict:
+    """Config for one training seed: the config's own seed keeps run_name, other seeds get run_name_seed<N>."""
+    run_name = config["run_name"] if seed == config["seed"] else f"{config['run_name']}_seed{seed}"
+    return {**config, "run_name": run_name, "seed": seed}
+
+
+def finished_run_matches(out_dir: Path, config: dict) -> bool:
+    """True if out_dir holds a finished run (metrics.json) whose saved config equals `config`."""
+    if not (out_dir / "metrics.json").exists() or not (out_dir / "config.yaml").exists():
+        return False
+    return yaml.safe_load((out_dir / "config.yaml").read_text()) == config
+
+
 def save_run(
     out_dir: Path, config: dict, results: dict[str, tuple[dict, dict]], bootstrap: dict, extra: dict | None = None
 ) -> dict:
@@ -48,7 +75,13 @@ def save_run(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
-    metrics = {"run_name": config["run_name"], "seed": config["seed"], "git_hash": git_hash(), "splits": {}}
+    metrics = {
+        "run_name": config["run_name"],
+        "seed": config["seed"],
+        "git_hash": git_hash(),
+        "data": {"dir": config["data_dir"], "sha256": data_checksums(config["data_dir"])},
+        "splits": {},
+    }
     if extra:
         metrics["run_info"] = extra
     for split, (means, per_user) in results.items():

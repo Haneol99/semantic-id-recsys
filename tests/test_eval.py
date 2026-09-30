@@ -44,6 +44,12 @@ def test_history_and_padding_are_masked():
     assert target_ranks(scores.clone(), [[1, 2]], torch.tensor([3])).item() == 0
 
 
+def test_target_in_history_raises():
+    scores = torch.ones(2, 6)
+    with pytest.raises(ValueError, match="row 1"):
+        target_ranks(scores, [[1], [2, 3]], torch.tensor([3, 3]))
+
+
 def test_ties_broken_by_lower_item_id():
     scores = torch.ones(1, 6)
     assert target_ranks(scores.clone(), [[]], torch.tensor([3])).item() == 2  # items 1, 2 come first
@@ -76,6 +82,7 @@ def test_paired_bootstrap():
     rng = np.random.default_rng(2)
     a = rng.binomial(1, 0.10, size=5000).astype(float)
     same = paired_bootstrap_ci(a, a)
+    assert same["frac_resamples_diff_le_0"] == 1.0
     assert same["mean"] == same["ci_low"] == same["ci_high"] == 0.0
     diff = paired_bootstrap_ci(a, np.zeros_like(a))
     assert diff["ci_low"] <= diff["mean"] <= diff["ci_high"] and diff["ci_low"] > 0

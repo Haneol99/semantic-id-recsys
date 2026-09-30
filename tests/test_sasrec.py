@@ -88,3 +88,28 @@ def test_bce_loss_overfits_tiny_dataset():
         loss.backward()
         opt.step()
     assert loss.item() < 0.05 < first
+
+
+def test_last_epoch_is_evaluated_when_eval_every_exceeds_max_epochs(tmp_path):
+    from recsys.data.dataset import Split
+    from recsys.train.sasrec_trainer import train_sasrec
+    torch.manual_seed(0)
+    split = Split(train=[[1, 2, 3], [4, 5, 6]], valid=[4, 7], test=[5, 8], num_items=8)
+    model = SASRec(num_items=8, max_len=4, hidden=8)
+    cfg = {"lr": 1e-3, "betas": [0.9, 0.98], "weight_decay": 0.0, "batch_size": 2, "max_epochs": 2,
+           "eval_every": 5, "early_stop_metric": "ndcg@10", "patience": 10}
+    info = train_sasrec(model, split, cfg, torch.device("cpu"), tmp_path / "best.pt", seed=0)
+    assert info["best_epoch"] == 2 and (tmp_path / "best.pt").exists()
+
+
+def test_seed_run_config_and_skip_check(tmp_path):
+    import yaml
+    from recsys.utils import finished_run_matches, seed_run_config
+    base = {"run_name": "r", "seed": 42, "data_dir": "d"}
+    assert seed_run_config(base, 42) == base
+    assert seed_run_config(base, 43) == {"run_name": "r_seed43", "seed": 43, "data_dir": "d"}
+    assert not finished_run_matches(tmp_path, base)
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(base))
+    (tmp_path / "metrics.json").write_text("{}")
+    assert finished_run_matches(tmp_path, base)
+    assert not finished_run_matches(tmp_path, seed_run_config(base, 43))

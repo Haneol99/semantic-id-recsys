@@ -111,7 +111,7 @@ def train_sasrec(model: SASRec, split: Split, cfg: dict, device: torch.device, c
         train_times.append(time.perf_counter() - t0)
         entry = {"epoch": epoch, "loss": total_loss / n_batches, "train_sec": train_times[-1]}
 
-        if epoch % cfg["eval_every"] == 0:
+        if epoch % cfg["eval_every"] == 0 or epoch == cfg["max_epochs"]:  # last epoch always evaluated
             t1 = time.perf_counter()
             means, _ = evaluate_split(model, split, "valid")
             entry.update({"eval_sec": time.perf_counter() - t1, **{f"valid_{k}": v for k, v in means.items()}})
