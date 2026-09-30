@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (in progress)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (next)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -46,14 +46,15 @@ Phase 1 — Foundation (in progress)
 | *paper TIGER* | test | 0.0454 | 0.0321 | 0.0648 | 0.0384 | reference |
 
 ## Open Issues / Decisions
-- **Timestamp ties — decided (owner, 2026-09-30):** keep raw-file order for same-day items; note in README. (9,719 / 22,363 users have tied valid/test timestamps.)
-- **SASRec above paper — cause found, OPEN decision:** the gap is the loss (full CE vs original BCE). Owner to decide: (1) which SASRec is the main baseline (CE, BCE, or both); (2) which tie order is the main dataset (raw/ASIN vs shuffled). Note: CE SASRec (test R@10 0.0897) is already above the paper's TIGER (0.0648). Earlier read-only diagnostics:
+- **Timestamp ties — superseded (owner, 2026-09-30):** first decided to keep raw-file order; after finding the raw file is ASIN-sorted, the main dataset switched to shuffled ties (see above). README must explain both. (9,719 / 22,363 users have tied valid/test timestamps under raw order.)
+- **SASRec gap — RESOLVED (owner, 2026-09-30):** cause is the loss (full CE vs original BCE). Decisions: (1) report both — SASRec-BCE = paper-reproduction check, SASRec-CE = main strong baseline; (2) main dataset = shuffled ties (`data/processed_tieshuffle`, tie-seed 0), original ASIN order kept as sensitivity check; TIGER on shuffled ties first, on original order only if time allows. PROJECT_SPEC §2, §4, §5 updated. Earlier read-only diagnostics:
   - Same-day valid/test users (43.5%): SASRec test R@10 0.1260 / N@10 0.0802 vs different-day 0.0618 / 0.0336 (different-day subgroup is close to the paper). The raw 5-core file is sorted by ASIN, so same-day items are in ASIN order.
   - History masking (valid): N@10 0.0701 masked vs 0.0519 unmasked; R@10 0.1137 vs 0.1037.
-  - Loss: full-softmax CE vs original SASRec's BCE with one sampled negative (not yet measured).
+  - Loss: full-softmax CE vs original SASRec's BCE with one sampled negative — measured in (a), explains the gap.
   - Ruled out: exact score ties at target (0 in 2,000 valid users), repeated items (0), test used for selection (no).
+- Main-dataset configs are the `*_tieshuffle.yaml` files (`popularity_tieshuffle`, `sasrec_tieshuffle` = CE main baseline, `sasrec_bce_tieshuffle` = paper check); the un-suffixed configs are the original-order sensitivity runs.
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
 - `requirements.txt` is unpinned; versions above are what was installed. Pin before the final README if exact reproducibility is needed.
 
 ## Next Step
-- Owner decides main SASRec baseline and main tie order; then Phase 2 (Semantic IDs).
+- Phase 2 (Semantic IDs) on the main dataset: item text → Sentence-T5 embeddings → RQ-VAE → Semantic IDs, with a code-quality check. Main comparison table: `results/summary_test_tieshuffle.md`.

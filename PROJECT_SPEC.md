@@ -21,6 +21,7 @@ Owner deadline: submit Google applications by ~2026-10-13 (hard stop: referral e
   - Metadata: `meta_Beauty.json.gz` (title, price, brand, categories). Note: the 2014 meta file is Python-dict-literal lines, not strict JSON — parse with `ast.literal_eval`.
 - **Preprocessing (must match the paper):**
   - Build each user's sequence by sorting reviews by timestamp.
+  - **Same-day ties (decided 2026-09-30):** timestamps have day resolution and the raw 5-core file is sorted by ASIN, so keeping raw-file order would order same-day items by ASIN. **Main dataset:** shuffle same-timestamp reviews per user with a fixed seed (`python -m recsys.data.preprocess --tie-seed 0 --out-dir data/processed_tieshuffle`). **Sensitivity check:** raw-file (ASIN) order in `data/processed/`. Both give the same counts; 6,554 users get a different test item.
   - Keep users with >= 5 interactions (5-core).
   - Remap item IDs to contiguous integers starting at 1 (0 = padding). Assign IDs in a **random or ASIN-sorted order, not in order of first appearance** (avoid sequential-ID leakage noted in TIGER Appendix D).
 - **Sanity check (must pass):** 22,363 users, 12,101 items, mean sequence length ~8.87, median 6. If counts differ, stop and report.
@@ -40,8 +41,11 @@ Owner deadline: submit Google applications by ~2026-10-13 (hard stop: referral e
 | Model | Phase | Notes |
 |---|---|---|
 | Popularity | 1 | Rank items by train-set interaction count |
-| SASRec | 1 | PyTorch, causal self-attention, max_len 50, cross-entropy over all items |
+| SASRec (CE) | 1 | **Main strong baseline.** PyTorch, 2 causal self-attention blocks, hidden 64, 1 head, dropout 0.2, max_len 50, full-softmax cross-entropy over all items |
+| SASRec (BCE) | 1 | **Paper-reproduction check.** Same model, original SASRec loss: BCE with one sampled negative per position |
 | TIGER | 2–3 | Sentence-T5 embeddings -> RQ-VAE Semantic IDs -> encoder-decoder Transformer + beam search |
+
+**Datasets per model (decided 2026-09-30):** all models run on the main dataset (shuffled ties) first. On the original-order dataset, Popularity and both SASRec variants already exist; TIGER runs there only if time allows.
 
 ### TIGER reference settings (from the paper)
 - Item text: title, price, brand, categories -> Sentence-T5 (768-d).
@@ -56,7 +60,9 @@ Owner deadline: submit Google applications by ~2026-10-13 (hard stop: referral e
 | SASRec | 0.0387 | 0.0249 | 0.0605 | 0.0318 |
 | TIGER | 0.0454 | 0.0321 | 0.0648 | 0.0384 |
 
-Targets: our SASRec within roughly ±15% of the paper; if outside, investigate preprocessing/eval before moving on.
+Targets: our SASRec **(BCE)** within roughly ±15% of the paper; if outside, investigate preprocessing/eval before moving on. SASRec (CE) is expected to exceed the paper's SASRec, since it uses a stronger loss than the original.
+
+Status (Phase 1, test): SASRec (BCE) is −7% to −8% vs paper on shuffled ties and −7% to −9% on original order, so the check passes. SASRec (CE) on shuffled ties scores R@10 0.0842 / N@10 0.0496, above the paper's TIGER too. TIGER is therefore compared against **both** SASRec variants, and the write-up must report honestly where TIGER stands relative to SASRec (CE).
 
 ## 6. Analysis (Phase 4)
 
