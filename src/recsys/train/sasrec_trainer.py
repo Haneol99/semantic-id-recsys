@@ -1,5 +1,11 @@
-"""SASRec training: next-item prediction at every position, full cross-entropy over all items,
-early stopping on validation NDCG@10 (shared full-ranking evaluator)."""
+"""SASRec training: next-item prediction at every position, early stopping on validation NDCG@10
+(shared full-ranking evaluator).
+
+Losses (config `loss`):
+  ce  - full cross-entropy over all items (default)
+  bce - original SASRec: binary cross-entropy on the positive and one sampled negative per position; the
+        negative is drawn uniformly from items not in the user's training sequence, fresh each epoch.
+"""
 
 import time
 from pathlib import Path
@@ -29,6 +35,35 @@ def sequence_ce_loss(model: SASRec, inputs: torch.Tensor, targets: torch.Tensor)
     return F.cross_entropy(logits, targets[valid])
 
 
+def sample_negatives(
+    targets: np.ndarray, user_items: list[set[int]], num_items: int, rng: np.random.Generator
+) -> np.ndarray:
+    """One negative per non-padding target position, uniform over 1..num_items minus the user's items."""
+    negs = np.zeros_like(targets)
+    rows, cols = np.nonzero(targets)
+    draws = rng.integers(1, num_items + 1, size=len(rows))
+    for k, (r, c) in enumerate(zip(rows, cols)):
+        neg = draws[k]
+        while neg in user_items[r]:
+            neg = rng.integers(1, num_items + 1)
+        negs[r, c] = neg
+    return negs
+
+
+def sequence_bce_loss(
+    model: SASRec, inputs: torch.Tensor, targets: torch.Tensor, negatives: torch.Tensor
+) -> torch.Tensor:
+    """Binary cross-entropy on (positive, one negative) at every non-padding position."""
+    hidden = model(inputs)
+    valid = targets != 0
+    h = hidden[valid]
+    pos = (h * model.item_emb(targets[valid])).sum(-1)
+    neg = (h * model.item_emb(negatives[valid])).sum(-1)
+    return F.binary_cross_entropy_with_logits(pos, torch.ones_like(pos)) + F.binary_cross_entropy_with_logits(
+        neg, torch.zeros_like(neg)
+    )
+
+
 def evaluate_split(model: SASRec, split: Split, name: str, batch_size: int = 1024):
     model.eval()
     histories = split.inputs(name)
@@ -38,8 +73,13 @@ def evaluate_split(model: SASRec, split: Split, name: str, batch_size: int = 102
 
 def train_sasrec(model: SASRec, split: Split, cfg: dict, device: torch.device, ckpt_path: Path, seed: int) -> dict:
     """Train with early stopping; the best model (by valid NDCG@10) is saved to ckpt_path and reloaded."""
-    inputs, targets = build_training_pairs(split.train, model.max_len)
-    inputs, targets = torch.as_tensor(inputs), torch.as_tensor(targets)
+    loss_name = cfg.get("loss", "ce")
+    if loss_name not in ("ce", "bce"):
+        raise ValueError(f"unknown loss {loss_name!r}")
+    inputs_np, targets_np = build_training_pairs(split.train, model.max_len)
+    inputs, targets = torch.as_tensor(inputs_np), torch.as_tensor(targets_np)
+    user_items = [set(s) for s in split.train]
+    neg_rng = np.random.default_rng(seed)
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"], betas=tuple(cfg["betas"]),
                            weight_decay=cfg["weight_decay"])
     gen = torch.Generator().manual_seed(seed)
@@ -53,10 +93,16 @@ def train_sasrec(model: SASRec, split: Split, cfg: dict, device: torch.device, c
         model.train()
         t0 = time.perf_counter()
         perm = torch.randperm(len(inputs), generator=gen)
+        if loss_name == "bce":
+            negatives = torch.as_tensor(sample_negatives(targets_np, user_items, split.num_items, neg_rng))
         total_loss, n_batches = 0.0, 0
         for i in range(0, len(perm), cfg["batch_size"]):
             idx = perm[i:i + cfg["batch_size"]]
-            loss = sequence_ce_loss(model, inputs[idx].to(device), targets[idx].to(device))
+            if loss_name == "bce":
+                loss = sequence_bce_loss(model, inputs[idx].to(device), targets[idx].to(device),
+                                         negatives[idx].to(device))
+            else:
+                loss = sequence_ce_loss(model, inputs[idx].to(device), targets[idx].to(device))
             opt.zero_grad()
             loss.backward()
             opt.step()

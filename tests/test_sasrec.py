@@ -60,3 +60,31 @@ def test_overfits_tiny_dataset():
     assert loss.item() < 0.05 < first
     model.eval()
     assert model.score([[1, 2, 3, 4]]).argmax().item() == 5
+
+
+def test_sample_negatives_avoid_user_items_and_padding():
+    from recsys.train.sasrec_trainer import sample_negatives
+    targets = np.array([[0, 2, 3], [4, 5, 6]])
+    user_items = [{1, 2, 3}, {4, 5, 6, 7}]
+    negs = sample_negatives(targets, user_items, num_items=8, rng=np.random.default_rng(0))
+    assert negs[0, 0] == 0  # padding position gets no negative
+    for r, c in zip(*np.nonzero(targets)):
+        assert 1 <= negs[r, c] <= 8 and negs[r, c] not in user_items[r]
+
+
+def test_bce_loss_overfits_tiny_dataset():
+    from recsys.train.sasrec_trainer import sample_negatives, sequence_bce_loss
+    torch.manual_seed(0)
+    seqs = [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]
+    model = SASRec(num_items=10, max_len=5, hidden=32, dropout=0.0)
+    inputs, targets = build_training_pairs(seqs, 5)
+    negs = torch.as_tensor(sample_negatives(targets, [set(s) for s in seqs], 10, np.random.default_rng(0)))
+    inputs, targets = torch.as_tensor(inputs), torch.as_tensor(targets)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+    first = sequence_bce_loss(model, inputs, targets, negs).item()
+    for _ in range(200):
+        loss = sequence_bce_loss(model, inputs, targets, negs)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    assert loss.item() < 0.05 < first

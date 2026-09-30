@@ -7,13 +7,17 @@ Outputs in data/processed/:
   id_maps.json    {"item2asin": [...], "user2reviewer": [...]}; item2asin[0] is None (padding)
   stats.json      dataset statistics
 
-Usage: python -m recsys.data.preprocess [--raw-dir data/raw] [--out-dir data/processed]
+Usage: python -m recsys.data.preprocess [--raw-dir data/raw] [--out-dir data/processed] [--tie-seed SEED]
+
+Same-day ties: by default reviews with equal timestamps keep raw-file order, which for the 5-core file
+is ASIN order. With --tie-seed, each user's same-timestamp reviews are shuffled with that seed instead.
 """
 
 import argparse
 import ast
 import gzip
 import json
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,16 +36,20 @@ def load_reviews(path: Path) -> list[tuple[str, str, int]]:
 
 
 def build_sequences(
-    reviews: list[tuple[str, str, int]], min_interactions: int = MIN_INTERACTIONS
+    reviews: list[tuple[str, str, int]], min_interactions: int = MIN_INTERACTIONS, tie_seed: int | None = None
 ) -> dict[str, list[tuple[str, int]]]:
     """Group by user, sort each user's reviews by timestamp, and keep users with >= min_interactions.
 
-    The sort is stable, so reviews with the same timestamp (the 2014 data has day resolution)
-    keep their order in the raw file.
+    The sort is stable. With tie_seed=None, reviews with the same timestamp (the 2014 data has day
+    resolution) keep their order in the raw file; otherwise each user's reviews are shuffled first
+    (seeded per user by reviewerID), so ties end up in a random but reproducible order.
     """
     by_user: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for user, asin, ts in reviews:
         by_user[user].append((asin, ts))
+    if tie_seed is not None:
+        for user, events in by_user.items():
+            random.Random(f"{tie_seed}:{user}").shuffle(events)
     return {
         user: sorted(events, key=lambda e: e[1])
         for user, events in by_user.items()
@@ -84,8 +92,8 @@ def sequence_stats(item_seqs: list[list[int]], num_items: int) -> dict:
     }
 
 
-def preprocess(raw_dir: Path, out_dir: Path) -> dict:
-    sequences = build_sequences(load_reviews(raw_dir / REVIEWS_FILE))
+def preprocess(raw_dir: Path, out_dir: Path, tie_seed: int | None = None) -> dict:
+    sequences = build_sequences(load_reviews(raw_dir / REVIEWS_FILE), tie_seed=tie_seed)
     item_map = build_item_map(sequences)
 
     users = sorted(sequences)  # user_id = index in reviewerID-sorted order
@@ -100,6 +108,7 @@ def preprocess(raw_dir: Path, out_dir: Path) -> dict:
     }
 
     stats = sequence_stats(item_seqs, len(item_map))
+    stats["tie_order"] = "raw_file" if tie_seed is None else f"shuffled(seed={tie_seed})"
     stats["items_with_meta"] = len(meta)
     stats["meta_field_coverage"] = {
         k: sum(m[k] is not None for m in item_meta.values()) for k in META_FIELDS
@@ -127,9 +136,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Preprocess Amazon 2014 Beauty 5-core.")
     parser.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
     parser.add_argument("--out-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument("--tie-seed", type=int, default=None, help="shuffle same-timestamp reviews with this seed")
     args = parser.parse_args()
 
-    stats = preprocess(args.raw_dir, args.out_dir)
+    stats = preprocess(args.raw_dir, args.out_dir, args.tie_seed)
     print(json.dumps(stats, indent=2))
 
 

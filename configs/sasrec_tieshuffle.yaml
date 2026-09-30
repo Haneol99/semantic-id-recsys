@@ -1,6 +1,6 @@
-run_name: sasrec
+run_name: sasrec_tieshuffle
 seed: 42
-data_dir: data/processed
+data_dir: data/processed_tieshuffle  # same-day ties shuffled (preprocess --tie-seed 0)
 results_dir: results
 bootstrap:
   n_resamples: 1000

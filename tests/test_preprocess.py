@@ -68,3 +68,13 @@ def test_item_ids_contiguous_and_asin_sorted(processed):
     assert item2asin[0] is None
     assert item2asin[1:] == sorted(item2asin[1:])
     assert set(item_meta) == {str(i) for i in used}
+
+
+def test_tie_seed_shuffles_only_same_timestamp_reviews():
+    reviews = [("u", "a", 1), ("u", "b", 2), ("u", "c", 2), ("u", "d", 2), ("u", "e", 2), ("u", "f", 3)]
+    raw = [a for a, _ in build_sequences(reviews)["u"]]
+    assert raw == ["a", "b", "c", "d", "e", "f"]  # ties keep input order
+    orders = {tuple(a for a, _ in build_sequences(reviews, tie_seed=s)["u"]) for s in range(20)}
+    assert all(o[0] == "a" and o[-1] == "f" and sorted(o[1:5]) == ["b", "c", "d", "e"] for o in orders)
+    assert len(orders) > 1  # different seeds give different tie orders
+    assert build_sequences(reviews, tie_seed=3) == build_sequences(reviews, tie_seed=3)  # reproducible
