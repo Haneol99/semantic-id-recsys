@@ -2,7 +2,9 @@
 
 Decoding is trie-constrained beam search: at step d only codes that extend some existing item's Semantic ID
 prefix are allowed, so every finished beam is a valid item. The decoder is re-run on the full (<= 4 token)
-prefix at each step; with 4 steps this is cheaper to get right than a KV cache.
+prefix at each step; with 4 steps this is cheaper to get right than a KV cache. use_cache=False matters: HF T5
+otherwise returns cross-attention keys/values for every (row, beam), which on MPS peaked at ~20 GB per batch of
+256 users x 30 beams (vs ~5 GB without; identical outputs).
 """
 
 import numpy as np
@@ -81,7 +83,8 @@ def constrained_beam_search(model: T5ForConditionalGeneration, input_ids: torch.
     for d in range(trie.num_positions):
         nb = prefixes.shape[1]
         out = model(encoder_outputs=BaseModelOutput(last_hidden_state=enc.repeat_interleave(nb, 0)),
-                    attention_mask=attention_mask.repeat_interleave(nb, 0), decoder_input_ids=dec.view(B * nb, d + 1))
+                    attention_mask=attention_mask.repeat_interleave(nb, 0), decoder_input_ids=dec.view(B * nb, d + 1),
+                    use_cache=False)
         first = FIRST_CODE_TOKEN + d * k_codes
         logp = F.log_softmax(out.logits[:, -1].float(), dim=-1)[:, first:first + k_codes].view(B, nb, k_codes)
         logp = logp.masked_fill(~trie.allowed_next(d, prefixes), -torch.inf)

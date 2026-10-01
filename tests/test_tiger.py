@@ -113,3 +113,38 @@ def test_ranked_list_eval_misses_and_rejects_history():
     assert means["recall@10"] == 0.5 and means["recall@1"] == 0.0
     with pytest.raises(ValueError, match="history"):
         evaluate_ranked_lists([[1, 3]], [[1]], [3])
+
+
+# ---------- training: resume and early stopping ----------
+
+def _toy_training(tmp_path, max_steps, patience, resume=False):
+    from recsys.train.tiger_trainer import train_tiger
+    split = Split(train=[[1, 2, 3], [4, 5, 6], [6, 1, 2], [3, 4, 5]], valid=[4, 1, 3, 6], test=[5, 2, 4, 1], num_items=6)
+    data = TigerData.build(split, ["r0", "r1", "r2", "r3"], SIDS, codebook_size=K, num_user_tokens=5, max_history=20)
+    trie = SemanticIDTrie(SIDS, codebook_size=K)
+    torch.manual_seed(0)
+    model = make_tiger(data.tok.vocab_size, num_layers=1, num_decoder_layers=1, num_heads=2, d_kv=8, d_model=16,
+                       d_ff=32, dropout=0.0)  # no dropout: the resumed run must match bit for bit on CPU
+    cfg = {"optimizer": "adafactor", "lr": 0.01, "constant_steps": 3, "batch_size": 3, "max_steps": max_steps,
+           "log_every": 1, "eval_every": 2, "patience": patience, "valid_subset_size": 4, "valid_subset_seed": 0,
+           "beam_size": 3}
+    info = train_tiger(model, data, trie, cfg, "cpu", tmp_path, seed=0, resume=resume)
+    return model, info, torch.load(tmp_path / "last.pt", weights_only=False)
+
+
+def test_resume_restores_step_optimizer_schedule_best_and_patience(tmp_path):
+    full_model, full_info, full_ckpt = _toy_training(tmp_path / "full", max_steps=10, patience=None)
+    _toy_training(tmp_path / "split", max_steps=4, patience=None)  # "pause" after the step-4 checkpoint
+    model, info, ckpt = _toy_training(tmp_path / "split", max_steps=10, patience=None, resume=True)
+    assert info["steps"] == full_info["steps"] == 10
+    for k in ("step", "best", "best_step", "evals_since_best"):
+        assert ckpt["state"][k] == full_ckpt["state"][k]
+    assert [e.get("loss") for e in ckpt["state"]["log"]] == [e.get("loss") for e in full_ckpt["state"]["log"]]
+    assert ckpt["scheduler"]["last_epoch"] == 10
+    for a, b in zip(model.parameters(), full_model.parameters(), strict=True):
+        assert torch.equal(a, b)
+
+
+def test_patience_none_trains_to_max_steps(tmp_path):
+    _, info, _ = _toy_training(tmp_path, max_steps=12, patience=None)
+    assert (info["stop_reason"], info["steps"]) == ("max_steps", 12)

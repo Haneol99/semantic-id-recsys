@@ -1,5 +1,6 @@
-"""TIGER training: teacher-forced cross-entropy on the next item's Semantic ID, early stopping on NDCG@10 of
-trie-constrained beam search over a fixed random subset of valid users. Checkpoints (last.pt) allow resuming.
+"""TIGER training: teacher-forced cross-entropy on the next item's Semantic ID. Model selection (best.pt) by NDCG@10
+of trie-constrained beam search over a fixed random subset of valid users; optional early stopping (patience).
+Checkpoints (last.pt) allow resuming.
 
 Learning rate (paper): `lr` for the first `constant_steps` steps, then lr * sqrt(constant_steps / step).
 """
@@ -54,6 +55,11 @@ def make_optimizer(model: torch.nn.Module, cfg: dict) -> torch.optim.Optimizer:
     raise ValueError(f"unknown optimizer {cfg['optimizer']!r}")
 
 
+def release_mps_cache(device) -> None:
+    if torch.device(device).type == "mps":
+        torch.mps.empty_cache()
+
+
 @torch.no_grad()
 def evaluate_users(model, data: TigerData, trie: SemanticIDTrie, name: str, users: np.ndarray, device,
                    beam_size: int, top_k: int = 10, batch_size: int = 256):
@@ -66,6 +72,7 @@ def evaluate_users(model, data: TigerData, trie: SemanticIDTrie, name: str, user
         x = data.eval_inputs(name, ub).to(device)
         items, _ = constrained_beam_search(model, x, (x != 0).long(), trie, beam_size)
         ranked += filter_ranked(items.cpu().numpy(), [histories[u] for u in ub], top_k)
+        release_mps_cache(device)  # cached beam-search buffers otherwise push training into swap
     hist_u = [histories[u] for u in users]
     targets = [data.split.targets(name)[u] for u in users]
     means, per_user = evaluate_ranked_lists(ranked, hist_u, targets)
@@ -76,7 +83,8 @@ def evaluate_users(model, data: TigerData, trie: SemanticIDTrie, name: str, user
 
 def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device, out_dir: Path, seed: int,
                 resume: bool = False, max_minutes: float | None = None) -> dict:
-    """Train until max_steps, early stop (patience evals without a better subset NDCG@10), or max_minutes.
+    """Train until max_steps, early stop (patience evals without a better subset NDCG@10; patience None = off),
+    or max_minutes.
 
     Saves best.pt (best subset NDCG@10) and last.pt (full state for resuming) at every eval.
     """
@@ -151,7 +159,7 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
                       f"({time.perf_counter() - t0:.1f}s)", flush=True)
                 save_last()
                 window_t0 = time.perf_counter()  # eval time is not training time
-                if state["evals_since_best"] >= cfg["patience"]:
+                if cfg["patience"] is not None and state["evals_since_best"] >= cfg["patience"]:
                     stop_reason = "early_stop"
                     break
 

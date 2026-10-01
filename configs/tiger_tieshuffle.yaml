@@ -31,7 +31,7 @@ train:
   max_steps: 200000  # paper
   log_every: 100
   eval_every: 2000  # steps between subset evals
-  patience: 10  # evals without a better subset valid NDCG@10
+  patience: null  # no early stopping: full max_steps as in the paper; best.pt = best subset valid NDCG@10
   valid_subset_size: 2000  # fixed random valid users for early stopping
   valid_subset_seed: 0
   beam_size: 30  # beam, then drop history items and keep the top 10

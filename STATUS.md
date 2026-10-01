@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (next)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER long run in progress)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -50,6 +50,13 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - 2.36% of items (285) need a non-zero 4th token.
   - **Quality** (`results/rqvae/quality.json`, `results/rqvae/first_code_categories.png`, cf. paper Fig. 4a): category = second level of the first category path, because the first level is "Beauty" for every item. First-code purity is 0.915 item-weighted (0.908 mean over codes) vs 0.344 ± 0.002 for random assignment (100 shuffles, same code sizes); the largest category is 31.5% of items.
 
+- **Phase 3 TIGER (in progress, 2026-10-01):**
+  - Code (commit c13de7b): `src/recsys/data/tiger_data.py`, `src/recsys/models/tiger.py` (trie-constrained beam search), `src/recsys/train/tiger_trainer.py`, `scripts/train_tiger.py`, `configs/tiger_tieshuffle.yaml`, `tests/test_tiger.py`. Model 4+4 layers, 6×64 heads, d_model 128, FFN 1024, dropout 0.1, 4.85M params; vocab 3,026 (4×256 code tokens + 2,000 hashed user tokens + pad/eos); last 20 items; Adafactor lr 0.01, constant 10k steps then inverse sqrt; batch 256; beam 30 → drop history items → top 10 → shared evaluator.
+  - Pilot (15 min, MPS): loss 5.39 → 3.75 in 1,000 steps; subset valid N@10 0.0039. MPS 2.11 steps/s vs CPU 0.44.
+  - Long run paused at step 4,000 (best subset valid N@10 0.0084 @ step 2,000), then resumed from `last.pt`.
+  - **Slow-eval fix (2026-10-01):** subset evals took 30 s → 461 s (step 2k → 4k; pilot 43 s → 415 s). Cause: one beam-search batch (256 users × 30 beams) peaked at ~20.6 GB MPS driver memory, kept cached after the eval; on a 32 GB Mac this pushed training and the next eval into swap (in a diagnostic, 300 training steps after two evals did not finish in ~8 min vs ~140 s normally). Fixes: (1) `use_cache=False` in the beam-search decoder calls — HF T5 otherwise returns cross-attention K/V for every beam; peak 20.6 → 5.0 GB, batch 5.4 → 2.1 s, identical items and scores; (2) `torch.mps.empty_cache()` after every eval batch. With (2) alone, evals after training took 25–32 s and training stayed at 2.1 steps/s. Eval interval stays 2,000 steps.
+  - **No early stopping (owner, 2026-10-01):** `patience: null`, train the full 200k steps as in the paper. Model selection unchanged: best.pt = best NDCG@10 on the fixed 2,000-user valid subset (beam 30), used for the one-time full valid + test evaluation. The resumed run continues the step-4,000 state (step, optimizer, LR schedule, best score, data order); the patience counter is still recorded but no longer stops training. Tests check that a resumed run matches an uninterrupted one bit for bit (CPU, no dropout) and that `patience: null` trains to `max_steps`. 51 tests pass.
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
@@ -91,4 +98,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 
 ## Next Step
 - Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
-- Phase 3 (TIGER seq2seq + beam search) on the main dataset (shuffled ties) with `data/processed/semantic_ids.json`. Main comparison table: `results/summary_test_tieshuffle.md`.
+- When the TIGER run (`results/tiger_tieshuffle`, log `results/tiger/train.log`) reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.
