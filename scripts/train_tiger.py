@@ -63,12 +63,12 @@ def main() -> None:
     import torch
     model.load_state_dict(torch.load(out_dir / "best.pt", map_location=device))
     users = np.arange(split.num_users)
-    results, short = {}, {}
+    results, list_stats = {}, {}
     for s in ("valid", "test"):  # test is evaluated exactly once, with the best checkpoint
-        means, per_user, short[s] = evaluate_users(model, data, trie, s, users, device, config["train"]["beam_size"])
+        means, per_user, list_stats[s] = evaluate_users(model, data, trie, s, users, device, config["train"]["beam_size"])
         results[s] = (means, per_user)
     metrics = save_run(out_dir, config, results, config["bootstrap"], extra={
-        "device": str(device), "num_params": num_params, **info, "short_lists": short,
+        "device": str(device), "num_params": num_params, **info, "list_stats": list_stats,
         "semantic_ids_sha256": file_sha256(config["semantic_ids_path"]),
     })
     for s, m in metrics["splits"].items():

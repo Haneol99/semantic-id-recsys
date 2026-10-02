@@ -117,7 +117,7 @@ def test_ranked_list_eval_misses_and_rejects_history():
 
 # ---------- training: resume and early stopping ----------
 
-def _toy_training(tmp_path, max_steps, patience, resume=False):
+def _toy_training(tmp_path, max_steps, patience, resume=False, **cfg_overrides):
     from recsys.train.tiger_trainer import train_tiger
     split = Split(train=[[1, 2, 3], [4, 5, 6], [6, 1, 2], [3, 4, 5]], valid=[4, 1, 3, 6], test=[5, 2, 4, 1], num_items=6)
     data = TigerData.build(split, ["r0", "r1", "r2", "r3"], SIDS, codebook_size=K, num_user_tokens=5, max_history=20)
@@ -125,9 +125,9 @@ def _toy_training(tmp_path, max_steps, patience, resume=False):
     torch.manual_seed(0)
     model = make_tiger(data.tok.vocab_size, num_layers=1, num_decoder_layers=1, num_heads=2, d_kv=8, d_model=16,
                        d_ff=32, dropout=0.0)  # no dropout: the resumed run must match bit for bit on CPU
-    cfg = {"optimizer": "adafactor", "lr": 0.01, "constant_steps": 3, "batch_size": 3, "max_steps": max_steps,
-           "log_every": 1, "eval_every": 2, "patience": patience, "valid_subset_size": 4, "valid_subset_seed": 0,
-           "beam_size": 3}
+    cfg = {"optimizer": "adafactor", "scale_parameter": True, "lr": 0.01, "constant_steps": 3, "batch_size": 3,
+           "max_steps": max_steps, "log_every": 1, "eval_every": 2, "patience": patience, "valid_subset_size": 4,
+           "valid_subset_seed": 0, "beam_size": 3, **cfg_overrides}
     info = train_tiger(model, data, trie, cfg, "cpu", tmp_path, seed=0, resume=resume)
     return model, info, torch.load(tmp_path / "last.pt", weights_only=False)
 
@@ -148,3 +148,25 @@ def test_resume_restores_step_optimizer_schedule_best_and_patience(tmp_path):
 def test_patience_none_trains_to_max_steps(tmp_path):
     _, info, _ = _toy_training(tmp_path, max_steps=12, patience=None)
     assert (info["stop_reason"], info["steps"]) == ("max_steps", 12)
+
+
+def test_lr_factor_warmup_then_constant_then_inverse_sqrt():
+    from recsys.train.tiger_trainer import lr_factor
+    assert [lr_factor(s, 10, warmup_steps=4) for s in range(5)] == [0.25, 0.5, 0.75, 1.0, 1.0]
+    assert lr_factor(10, 10) == 1.0 and lr_factor(40, 10) == 0.5
+    assert lr_factor(0, 10) == 1.0  # paper schedule: no warmup
+
+
+def test_adafactor_uses_relative_updates_when_configured():
+    from recsys.train.tiger_trainer import make_optimizer
+    m = torch.nn.Linear(4, 4)
+    for flag in (True, False):
+        opt = make_optimizer(m, {"optimizer": "adafactor", "lr": 0.01, "scale_parameter": flag})
+        assert opt.param_groups[0]["scale_parameter"] is flag and opt.param_groups[0]["relative_step"] is False
+
+
+def test_eval_logs_distinct_items_and_warns_on_collapse(tmp_path):
+    with pytest.warns(UserWarning, match="possible collapse"):
+        _, _, ckpt = _toy_training(tmp_path, max_steps=2, patience=None, min_distinct_items=1000)
+    entry = [e for e in ckpt["state"]["log"] if "distinct_items" in e][0]
+    assert 1 <= entry["distinct_items"] <= 6 and entry["short_lists"] >= 0

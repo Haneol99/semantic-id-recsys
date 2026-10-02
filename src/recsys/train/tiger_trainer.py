@@ -2,12 +2,18 @@
 of trie-constrained beam search over a fixed random subset of valid users; optional early stopping (patience).
 Checkpoints (last.pt) allow resuming.
 
-Learning rate (paper): `lr` for the first `constant_steps` steps, then lr * sqrt(constant_steps / step).
+Learning rate (paper): `lr` for the first `constant_steps` steps, then lr * sqrt(constant_steps / step); optional
+linear warmup over the first `warmup_steps` steps (0 for the paper schedule).
+
+Collapse check: every eval logs the number of distinct items across the subset's top-k lists and warns when it is
+below `min_distinct_items`. A model that ignores its input gives (nearly) the same list to every user; the first
+Adafactor run without parameter scaling gave 15 distinct items for 2,000 users.
 """
 
 import json
 import math
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,13 +48,19 @@ class TigerData:
         return torch.as_tensor(self.tok.encode_inputs([histories[u] for u in users], self.user_tokens[users]))
 
 
-def lr_factor(step: int, constant_steps: int) -> float:
+def lr_factor(step: int, constant_steps: int, warmup_steps: int = 0) -> float:
+    """LambdaLR factor; `step` = optimizer steps already taken, so the first update uses step 0."""
+    if step < warmup_steps:
+        return (step + 1) / warmup_steps
     return 1.0 if step <= constant_steps else math.sqrt(constant_steps / step)
 
 
 def make_optimizer(model: torch.nn.Module, cfg: dict) -> torch.optim.Optimizer:
-    if cfg["optimizer"] == "adafactor":  # T5 default; plain lr, no relative step or parameter scaling
-        return Adafactor(model.parameters(), lr=cfg["lr"], scale_parameter=False, relative_step=False,
+    if cfg["optimizer"] == "adafactor":
+        # scale_parameter=True (T5 / Mesh-TF default): each update is lr x the parameter's RMS, i.e. relative.
+        # With False the update size is ~lr per weight regardless of scale; at lr 0.01 that is the whole init scale
+        # of T5's attention weights per step, and the encoder collapsed (STATUS, Phase 3).
+        return Adafactor(model.parameters(), lr=cfg["lr"], scale_parameter=cfg["scale_parameter"], relative_step=False,
                          warmup_init=False, weight_decay=cfg.get("weight_decay", 0.0))
     if cfg["optimizer"] == "adamw":
         return torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg.get("weight_decay", 0.0))
@@ -63,7 +75,10 @@ def release_mps_cache(device) -> None:
 @torch.no_grad()
 def evaluate_users(model, data: TigerData, trie: SemanticIDTrie, name: str, users: np.ndarray, device,
                    beam_size: int, top_k: int = 10, batch_size: int = 256):
-    """Beam search -> drop history items -> top_k list -> shared ranked-list evaluator."""
+    """Beam search -> drop history items -> top_k list -> shared ranked-list evaluator.
+
+    Returns (means, per_user, list_stats); list_stats = short lists (< top_k items) and distinct items over all lists.
+    """
     model.eval()
     histories = data.split.inputs(name)
     ranked = []
@@ -76,9 +91,10 @@ def evaluate_users(model, data: TigerData, trie: SemanticIDTrie, name: str, user
     hist_u = [histories[u] for u in users]
     targets = [data.split.targets(name)[u] for u in users]
     means, per_user = evaluate_ranked_lists(ranked, hist_u, targets)
-    short = int(sum(len(r) < top_k for r in ranked))
+    list_stats = {"short_lists": int(sum(len(r) < top_k for r in ranked)),
+                  "distinct_items": len({i for r in ranked for i in r})}
     model.train()
-    return means, per_user, short
+    return means, per_user, list_stats
 
 
 def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device, out_dir: Path, seed: int,
@@ -90,7 +106,8 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     opt = make_optimizer(model, cfg)
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: lr_factor(s, cfg["constant_steps"]))
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda s: lr_factor(s, cfg["constant_steps"], cfg.get("warmup_steps", 0)))
     n, bs = len(data.train_inputs), cfg["batch_size"]
     steps_per_epoch = math.ceil(n / bs)
     subset = np.sort(np.random.default_rng(cfg["valid_subset_seed"]).choice(
@@ -144,7 +161,7 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
 
             if step % cfg["eval_every"] == 0:
                 t0 = time.perf_counter()
-                means, _, short = evaluate_users(model, data, trie, "valid", subset, device, cfg["beam_size"])
+                means, _, lists = evaluate_users(model, data, trie, "valid", subset, device, cfg["beam_size"])
                 metric = means["ndcg@10"]
                 improved = metric > state["best"]
                 if improved:
@@ -153,10 +170,16 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
                 else:
                     state["evals_since_best"] += 1
                 state["log"].append({"step": step, **{f"subset_valid_{k}": v for k, v in means.items()},
-                                     "short_lists": short, "eval_sec": round(time.perf_counter() - t0, 1)})
+                                     **lists, "eval_sec": round(time.perf_counter() - t0, 1)})
                 print(f"  eval step {step}: subset valid ndcg@10 {metric:.4f} recall@10 {means['recall@10']:.4f}  "
-                      f"best {state['best']:.4f}@{state['best_step']}  short lists {short}  "
+                      f"best {state['best']:.4f}@{state['best_step']}  distinct items {lists['distinct_items']}  "
+                      f"short lists {lists['short_lists']}  "
                       f"({time.perf_counter() - t0:.1f}s)", flush=True)
+                if lists["distinct_items"] < cfg.get("min_distinct_items", 0):
+                    msg = (f"possible collapse at step {step}: only {lists['distinct_items']} distinct items in "
+                           f"{len(subset)} users' top-10 lists (< {cfg['min_distinct_items']}); is the input ignored?")
+                    print(f"  WARNING: {msg}", flush=True)
+                    warnings.warn(msg, stacklevel=1)
                 save_last()
                 window_t0 = time.perf_counter()  # eval time is not training time
                 if cfg["patience"] is not None and state["evals_since_best"] >= cfg["patience"]:

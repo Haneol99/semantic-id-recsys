@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER long run in progress)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER: first run collapsed, optimizer fixed and probe passed; long run awaiting go-ahead)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -57,6 +57,22 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
   - **Slow-eval fix (2026-10-01):** subset evals took 30 s → 461 s (step 2k → 4k; pilot 43 s → 415 s). Cause: one beam-search batch (256 users × 30 beams) peaked at ~20.6 GB MPS driver memory, kept cached after the eval; on a 32 GB Mac this pushed training and the next eval into swap (in a diagnostic, 300 training steps after two evals did not finish in ~8 min vs ~140 s normally). Fixes: (1) `use_cache=False` in the beam-search decoder calls — HF T5 otherwise returns cross-attention K/V for every beam; peak 20.6 → 5.0 GB, batch 5.4 → 2.1 s, identical items and scores; (2) `torch.mps.empty_cache()` after every eval batch. With (2) alone, evals after training took 25–32 s and training stayed at 2.1 steps/s. Eval interval stays 2,000 steps.
   - **No early stopping (owner, 2026-10-01):** `patience: null`, train the full 200k steps as in the paper. Model selection unchanged: best.pt = best NDCG@10 on the fixed 2,000-user valid subset (beam 30), used for the one-time full valid + test evaluation. The resumed run continues the step-4,000 state (step, optimizer, LR schedule, best score, data order); the patience counter is still recorded but no longer stops training. Tests check that a resumed run matches an uninterrupted one bit for bit (CPU, no dropout) and that `patience: null` trains to `max_steps`. 51 tests pass.
 
+  - **First long run collapsed (paused by owner at step ~20k, 2026-10-01).** Subset valid N@10 stayed at 0.005–0.008 (Popularity level) from step 2k to 20k while train loss fell. Read-only diagnostics on last.pt (20k) and best.pt (2k):
+    - Top-10 lists of 2,000 valid users contain 15 distinct items (mean pairwise overlap 0.98); swapping in another user's input leaves top-10 unchanged (overlap 1.00; exact scores over all items correlate 1.0000). In-sample Recall@10 on 2,000 train examples 0.022 ≈ valid 0.018.
+    - Teacher-forced NLL per position (step 20k, valid): 5.44 / 3.78 / 0.69 / 0.06. The first code is at the train-marginal level (5.42; uniform 5.55), worse than a first-code bigram table (5.00, acc 9.2% vs the model's 1.2%). Train loss fell only through positions 2–4, which follow from the prefix.
+    - Encoder output collapsed (pooled cosine between users 0.958 at 2k → 0.999 at 20k); zeroing the encoder output changes position-0 predictions by KL 0.0003. Attention/FFN weights grew 3.7–6.4× their init norm by step 2k and 7–17× by 20k (embeddings 1.9×).
+    - Ruled out: train/eval input layout, target Semantic IDs (all 131,413 match `semantic_ids.json`), label shift (decoder start 0), item-ID maps, trie, HF T5 cross-attention wiring, beam search (scores match exact full scoring within 2e-5; exact full-ranking Recall@10 was also 0.010).
+    - **Cause: Adafactor with `scale_parameter=False` at lr 0.01** (my choice in c13de7b). Updates are then ~lr per weight regardless of scale, i.e. about the whole init std of T5 attention weights (q 0.011) per step.
+  - **Fix (2026-10-01):** `scale_parameter: true` (T5 / Mesh-TF default: update = lr × parameter RMS), lr 0.01, paper schedule unchanged. Not a paper deviation: the paper gives only lr and schedule. Also added: optional `warmup_steps` (0 here; for an AdamW fallback), `distinct_items` in every eval log entry, and a warning when it is below `min_distinct_items: 100` (collapse check). 54 tests pass.
+  - **2,000-step probe with the fix** (real `train_tiger`, MPS, seed 42; outputs in a scratch dir, not `results/`), pass criteria fixed before running, all passed:
+    - position-0 valid NLL 4.81 < bigram baseline 5.00 (per position 4.81 / 3.84 / 1.49 / 0.05);
+    - distinct items in subset top-10 lists 519 ≥ 100 (323 at step 1k);
+    - subset valid N@10 0.0298 (R@10 0.057) ≥ 1.5 × Popularity on the same users (0.0087); 0.0258 at step 1k;
+    - top-10 overlap with another user's input 0.118 < 0.5;
+    - zero-encoder KL at position 0 0.837 > 0.01; encoder pooled cosine between users 0.32.
+    - Speed 2.0 steps/s; subset eval 13.5 s. The AdamW fallback (lr 1e-3, 1k warmup) was not needed.
+  - The collapsed run's `results/tiger_tieshuffle` (best.pt, last.pt at step 20k) is kept until the restart; it cannot be resumed with the new optimizer setting.
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
@@ -98,4 +114,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 
 ## Next Step
 - Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
-- When the TIGER run (`results/tiger_tieshuffle`, log `results/tiger/train.log`) reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.
+- On owner go-ahead: move the collapsed run to `results/tiger_tieshuffle_collapsed_adafactor_noscale`, restart TIGER from step 0 with the fixed config (200k steps, no early stopping). When it reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.
