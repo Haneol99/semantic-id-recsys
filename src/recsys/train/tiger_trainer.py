@@ -128,6 +128,7 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
 
     model.train()
     start, window_loss, window_steps, window_t0 = time.perf_counter(), 0.0, 0, time.perf_counter()
+    prev_eval_step, prev_eval_train_sec = state["step"], state["train_sec"]  # for steps/s between evals
     stop_reason = "max_steps"
     while state["step"] < cfg["max_steps"]:
         epoch, pos = divmod(state["step"], steps_per_epoch)
@@ -160,6 +161,10 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
                 window_loss, window_steps, window_t0 = 0.0, 0, time.perf_counter()
 
             if step % cfg["eval_every"] == 0:
+                # training-only speed since the previous eval (train_sec is updated every log_every steps)
+                dt_train = state["train_sec"] - prev_eval_train_sec
+                train_rate = (step - prev_eval_step) / dt_train if dt_train > 0 else float("nan")
+                prev_eval_step, prev_eval_train_sec = step, state["train_sec"]
                 t0 = time.perf_counter()
                 means, _, lists = evaluate_users(model, data, trie, "valid", subset, device, cfg["beam_size"])
                 metric = means["ndcg@10"]
@@ -170,10 +175,11 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
                 else:
                     state["evals_since_best"] += 1
                 state["log"].append({"step": step, **{f"subset_valid_{k}": v for k, v in means.items()},
-                                     **lists, "eval_sec": round(time.perf_counter() - t0, 1)})
+                                     **lists, "train_steps_per_sec": round(train_rate, 3),
+                                     "eval_sec": round(time.perf_counter() - t0, 1)})
                 print(f"  eval step {step}: subset valid ndcg@10 {metric:.4f} recall@10 {means['recall@10']:.4f}  "
                       f"best {state['best']:.4f}@{state['best_step']}  distinct items {lists['distinct_items']}  "
-                      f"short lists {lists['short_lists']}  "
+                      f"short lists {lists['short_lists']}  train {train_rate:.2f} steps/s  "
                       f"({time.perf_counter() - t0:.1f}s)", flush=True)
                 if lists["distinct_items"] < cfg.get("min_distinct_items", 0):
                     msg = (f"possible collapse at step {step}: only {lists['distinct_items']} distinct items in "

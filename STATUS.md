@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER: first run collapsed, optimizer fixed and probe passed; long run awaiting go-ahead)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER: first run collapsed, optimizer fixed, probe passed; fresh 200k-step run in progress)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -71,7 +71,8 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - top-10 overlap with another user's input 0.118 < 0.5;
     - zero-encoder KL at position 0 0.837 > 0.01; encoder pooled cosine between users 0.32.
     - Speed 2.0 steps/s; subset eval 13.5 s. The AdamW fallback (lr 1e-3, 1k warmup) was not needed.
-  - The collapsed run's `results/tiger_tieshuffle` (best.pt, last.pt at step 20k) is kept until the restart; it cannot be resumed with the new optimizer setting.
+  - Collapsed run moved to `results/tiger_tieshuffle_collapsed_adafactor_noscale` (best.pt, last.pt at step 20k); it cannot be resumed with the new optimizer setting.
+  - **Unexplained slowdown in the collapsed run:** around step 20k training ran at 0.7 steps/s (vs 2.1 before) and the step-20k subset eval took 41.5 s (vs ~15 s). Cause not investigated (other load on the Mac is possible). Every eval now also logs `train_steps_per_sec`: training-only speed since the previous eval, so a slowdown shows within one eval interval.
 
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
@@ -114,4 +115,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 
 ## Next Step
 - Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
-- On owner go-ahead: move the collapsed run to `results/tiger_tieshuffle_collapsed_adafactor_noscale`, restart TIGER from step 0 with the fixed config (200k steps, no early stopping). When it reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.
+- TIGER fresh run from step 0 with the fixed config (200k steps, no early stopping; `results/tiger_tieshuffle`, log `results/tiger/train.log`). When it reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.

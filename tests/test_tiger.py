@@ -170,3 +170,4 @@ def test_eval_logs_distinct_items_and_warns_on_collapse(tmp_path):
         _, _, ckpt = _toy_training(tmp_path, max_steps=2, patience=None, min_distinct_items=1000)
     entry = [e for e in ckpt["state"]["log"] if "distinct_items" in e][0]
     assert 1 <= entry["distinct_items"] <= 6 and entry["short_lists"] >= 0
+    assert entry["train_steps_per_sec"] > 0
