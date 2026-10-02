@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER: first run collapsed, optimizer fixed, probe passed; fresh 200k-step run in progress)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER done: stopped by hand at step 100k, best.pt @ 22k evaluated once on valid + test)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -50,7 +50,7 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - 2.36% of items (285) need a non-zero 4th token.
   - **Quality** (`results/rqvae/quality.json`, `results/rqvae/first_code_categories.png`, cf. paper Fig. 4a): category = second level of the first category path, because the first level is "Beauty" for every item. First-code purity is 0.915 item-weighted (0.908 mean over codes) vs 0.344 ± 0.002 for random assignment (100 shuffles, same code sizes); the largest category is 31.5% of items.
 
-- **Phase 3 TIGER (in progress, 2026-10-01):**
+- **Phase 3 TIGER (2026-10-01 → 10-02):**
   - Code (commit c13de7b): `src/recsys/data/tiger_data.py`, `src/recsys/models/tiger.py` (trie-constrained beam search), `src/recsys/train/tiger_trainer.py`, `scripts/train_tiger.py`, `configs/tiger_tieshuffle.yaml`, `tests/test_tiger.py`. Model 4+4 layers, 6×64 heads, d_model 128, FFN 1024, dropout 0.1, 4.85M params; vocab 3,026 (4×256 code tokens + 2,000 hashed user tokens + pad/eos); last 20 items; Adafactor lr 0.01, constant 10k steps then inverse sqrt; batch 256; beam 30 → drop history items → top 10 → shared evaluator.
   - Pilot (15 min, MPS): loss 5.39 → 3.75 in 1,000 steps; subset valid N@10 0.0039. MPS 2.11 steps/s vs CPU 0.44.
   - Long run paused at step 4,000 (best subset valid N@10 0.0084 @ step 2,000), then resumed from `last.pt`.
@@ -72,6 +72,13 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - zero-encoder KL at position 0 0.837 > 0.01; encoder pooled cosine between users 0.32.
     - Speed 2.0 steps/s; subset eval 13.5 s. The AdamW fallback (lr 1e-3, 1k warmup) was not needed.
   - Collapsed run moved to `results/tiger_tieshuffle_collapsed_adafactor_noscale` (best.pt, last.pt at step 20k); it cannot be resumed with the new optimizer setting.
+  - **Final run** (`results/tiger_tieshuffle`, log `results/tiger/train.log`; started 2026-10-01 18:55 from clean commit db14412, seed 42, MPS):
+    - **Stopped by hand at step ~100k (owner, 2026-10-02 08:58; SIGTERM to the process group), not by the normal path. The paper's 200k-step schedule was not completed.** Reason: overfitting. Subset valid NDCG@10 peaked at **0.0477 at step 22k** (best.pt), then declined to ~0.027 by step 100k (0.0266 at the step-100k eval; 50 evals) while train loss kept falling (2.57 @ 2k → 1.82 @ 22k → 1.39 @ 50k → 1.08 @ 100k). No collapse: ≥ 550 distinct items in the subset top-10 lists at every eval (2,236 at 20k); 2.0 steps/s throughout, 13.5 s per subset eval; 13.8 h of training.
+    - Eval curve (step vs subset valid NDCG@10, with train loss): `results/tiger/eval_curve.png` (`scripts/plot_tiger_eval_curve.py`; gitignored like other run outputs, copy into README assets in Phase 5).
+    - Final valid + test evaluation **once**, with best.pt (step 22k), via the new `train_tiger.py --eval-only --stop-reason manual_stop_overfitting` (reads the run state from last.pt; refuses to run if metrics.json exists). metrics.json `git_hash` is `db14412…-dirty`: the uncommitted change was only this eval-only path (and `compare_runs.py --paper` taking several models); evaluation code unchanged. `--max-steps 100000` now reproduces the stop (`scripts/reproduce.sh`).
+    - Full valid (22,363 users): R@5 0.0516, N@5 0.0338, R@10 0.0787, N@10 0.0426 (the 2,000-user subset used for selection gave 0.0477, optimistic). Test: R@5 0.0414, N@5 0.0270, **R@10 0.0651, N@10 0.0346**. Short lists (< 10 items after dropping history): 19 valid / 24 test users; 4,375 / 4,275 distinct items in the top-10 lists.
+    - **vs the paper's TIGER** (test): R@10 +0.5% (paper 0.0648 inside our CI [0.0614, 0.0686]); R@5 −8.9%, N@5 −15.8%, N@10 −9.8% (paper values above our CIs). One training seed.
+    - **vs baselines** (paired bootstrap over 22,363 test users, `results/summary_test_tieshuffle.md`): TIGER − Popularity N@10 +0.0270 [+0.0249, +0.0293]. TIGER − SASRec-CE N@10 −0.0150 [−0.0170, −0.0129] (seed 42; −0.0160 / −0.0159 vs seeds 43 / 44; all metrics, all seeds CI < 0). TIGER − SASRec-BCE N@10 +0.0049 [+0.0029, +0.0070] (seed 42; +0.0069 / +0.0067 vs seeds 43 / 44; all metrics, all seeds CI > 0). So TIGER beats the paper-style SASRec (BCE), as in the paper, but not the full-softmax SASRec-CE baseline.
   - **Unexplained slowdown in the collapsed run:** around step 20k training ran at 0.7 steps/s (vs 2.1 before) and the step-20k subset eval took 41.5 s (vs ~15 s). Cause not investigated (other load on the Mac is possible). Every eval now also logs `train_steps_per_sec`: training-only speed since the previous eval, so a slowdown shows within one eval interval.
 
 ## Results
@@ -88,6 +95,11 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 | sasrec_bce_tieshuffle | test | 0.0355 [0.0332, 0.0378] | 0.0231 [0.0215, 0.0249] | 0.0559 [0.0529, 0.0591] | 0.0297 [0.0280, 0.0316] | shuffled ties, BCE, seed 42; −6.6…−8.4% vs paper |
 | **sasrec_tieshuffle ×3** | test | 0.0601 ± 0.0010 | 0.0420 ± 0.0003 | 0.0859 ± 0.0015 | 0.0503 ± 0.0006 | **main CE baseline**; seeds 42/43/44, mean ± std (ddof=1) |
 | **sasrec_bce_tieshuffle ×3** | test | 0.0339 ± 0.0014 | 0.0220 ± 0.0009 | 0.0539 ± 0.0017 | 0.0285 ± 0.0011 | **paper check**; seeds 42/43/44; −10.5…−12.4% vs paper (within ±15%) |
+| tiger_tieshuffle | valid | 0.0516 | 0.0338 | 0.0787 | 0.0426 | best.pt @ step 22k (subset valid N@10 0.0477) |
+| **tiger_tieshuffle** | test | 0.0414 [0.0386, 0.0441] | 0.0270 [0.0252, 0.0290] | 0.0651 [0.0614, 0.0686] | 0.0346 [0.0326, 0.0367] | seed 42; run stopped by hand at 100k of 200k (overfitting); −8.9 / −15.8 / +0.5 / −9.8% vs paper TIGER |
+| tiger − sasrec_tieshuffle | test | −0.0182 [−0.0212, −0.0153] | −0.0147 [−0.0167, −0.0125] | −0.0190 [−0.0228, −0.0156] | −0.0150 [−0.0170, −0.0129] | paired, vs CE seed 42 (seeds 43/44 similar, all CI < 0) |
+| tiger − sasrec_bce_tieshuffle | test | +0.0059 [+0.0032, +0.0088] | +0.0039 [+0.0019, +0.0060] | +0.0092 [+0.0054, +0.0128] | +0.0049 [+0.0029, +0.0070] | paired, vs BCE seed 42 (seeds 43/44 larger, all CI > 0) |
+| tiger − popularity_tieshuffle | test | +0.0319 [+0.0290, +0.0349] | +0.0213 [+0.0195, +0.0235] | +0.0496 [+0.0459, +0.0532] | +0.0270 [+0.0249, +0.0293] | paired |
 | *paper SASRec* | test | 0.0387 | 0.0249 | 0.0605 | 0.0318 | reference |
 | *paper TIGER* | test | 0.0454 | 0.0321 | 0.0648 | 0.0384 | reference |
 
@@ -97,7 +109,8 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
   2. *AdamW lr 1e-3, weight decay 0.01* instead of Adagrad lr 0.4: every Adagrad setting tried collapsed (see Phase 2 above).
   3. *Dead-code reset*: every 10 epochs until epoch 2,000, unused codes at each level move onto random current residuals (240 / 41 / 21 resets in total), followed by ≥1,000 epochs without resets. Final assignments come from this reset-free phase.
   4. *Early stop*: 3,000 epochs (plateau: 5 evals without 1% recon gain or higher min usage) instead of 20k.
-  - Not deviations, but choices the paper leaves open: MSE averaged over dimensions for the reconstruction and RQ terms; CPU training (deterministic); 4th token assigned 0, 1, 2, … in item-ID order within a collision group; purity uses the second category level. The paper settings remain runnable as `configs/rqvae_paper.yaml` (collapses).
+  5. *TIGER training stopped at step ~100k of the paper's 200k* (manual stop, overfitting; best checkpoint at 22k). Model selection by NDCG@10 on a fixed 2,000-user valid subset (beam 30) — the paper does not say how it selects checkpoints.
+  - Not deviations, but choices the paper leaves open: Adafactor with parameter scaling (`scale_parameter: true`; the paper gives only lr 0.01 + inverse-sqrt schedule); MSE averaged over dimensions for the reconstruction and RQ terms; CPU training (deterministic); 4th token assigned 0, 1, 2, … in item-ID order within a collision group; purity uses the second category level. The paper settings remain runnable as `configs/rqvae_paper.yaml` (collapses).
 - `data/processed` now also holds `item_emb.{npy,json}` and `semantic_ids.json`, so runs from now on record more files in `data.sha256`. Pairing uses `splits.json`, which is unchanged. Phase 3 reads Semantic IDs from `data/processed/semantic_ids.json` for the shuffled-ties runs too (same item IDs).
 - `results/rqvae/` (model, log, chart) is gitignored like other run outputs; copy the chart into the README assets in Phase 5.
 - **Original-order results carry the ASIN-order artifact.** In raw-file order, same-day items are in ASIN (= item ID) order: on all 9,719 same-day valid/test pairs the test item has the higher ID (4,760 / 9,719 with shuffled ties). Treat `popularity`, `sasrec` and `sasrec_bce` and `results/summary_test.md` as a sensitivity check only; the table is labeled.
@@ -114,5 +127,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
 
 ## Next Step
-- Report TIGER vs SASRec with seed mean ± std plus the seed-42 per-user CI; use ≥3 TIGER seeds if time allows.
-- TIGER fresh run from step 0 with the fixed config (200k steps, no early stopping; `results/tiger_tieshuffle`, log `results/tiger/train.log`). When it reaches 200k steps: full valid + test eval once with best.pt (done by `train_tiger.py`), paired bootstrap vs Popularity, SASRec-CE, SASRec-BCE (shuffled ties) and the paper's TIGER, update this file. Main comparison table: `results/summary_test_tieshuffle.md`.
+- Phase 3 done. Open choices for the owner: (a) more TIGER seeds (each ~3–4 h if stopped near the best step, e.g. `--max-steps 40000`; the single-seed result has no seed variance yet); (b) whether to look into the overfitting (e.g. dropout, weight decay) — would be a further deviation from the paper's setup; (c) Phase 4 (cold-start / bucket analysis) per PROJECT_SPEC.

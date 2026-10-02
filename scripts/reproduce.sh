@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate every Phase 1 run and summary table. Run from the repo root in the `recsys` env
+# Regenerate every Phase 1-3 run and summary table. Run from the repo root in the `recsys` env
 # (pip install -r requirements.txt && pip install -e .).
 #
 # SASRec training on MPS is not bit-for-bit deterministic: a rerun matches the recorded numbers only up to
@@ -19,17 +19,30 @@ python scripts/run_popularity.py --config configs/popularity_tieshuffle.yaml
 python scripts/train_sasrec.py --config configs/sasrec_tieshuffle.yaml --seeds 42 43 44      # CE: main baseline
 python scripts/train_sasrec.py --config configs/sasrec_bce_tieshuffle.yaml --seeds 42 43 44  # BCE: paper check
 
+# Phase 2: Semantic IDs (item IDs are identical in both data dirs; RQ-VAE trains on CPU, deterministic)
+python scripts/embed_items.py
+python scripts/train_rqvae.py --config configs/rqvae.yaml
+python scripts/semantic_id_report.py
+
+# Phase 3: TIGER (MPS, ~14 h). The recorded run was stopped by hand at step 100k after subset valid NDCG@10 had
+# declined since step 22k (overfitting); --max-steps 100000 reproduces that stop. Final valid + test eval uses best.pt.
+python scripts/train_tiger.py --config configs/tiger_tieshuffle.yaml --max-steps 100000
+python scripts/plot_tiger_eval_curve.py
+
 # Sensitivity check (original ASIN tie order; carries the ASIN-order artifact)
 python scripts/run_popularity.py --config configs/popularity.yaml
 python scripts/train_sasrec.py --config configs/sasrec.yaml
 python scripts/train_sasrec.py --config configs/sasrec_bce.yaml
 
 # Summary tables
-python scripts/compare_runs.py --runs popularity_tieshuffle sasrec_tieshuffle sasrec_bce_tieshuffle \
-  --paper sasrec --seeds 43 44 \
-  --pairs sasrec_tieshuffle:popularity_tieshuffle sasrec_bce_tieshuffle:popularity_tieshuffle \
+python scripts/compare_runs.py --runs popularity_tieshuffle sasrec_tieshuffle sasrec_bce_tieshuffle tiger_tieshuffle \
+  --paper tiger sasrec --seeds 43 44 \
+  --pairs tiger_tieshuffle:popularity_tieshuffle \
+          tiger_tieshuffle:sasrec_tieshuffle tiger_tieshuffle:sasrec_tieshuffle_seed43 tiger_tieshuffle:sasrec_tieshuffle_seed44 \
+          tiger_tieshuffle:sasrec_bce_tieshuffle tiger_tieshuffle:sasrec_bce_tieshuffle_seed43 tiger_tieshuffle:sasrec_bce_tieshuffle_seed44 \
+          sasrec_tieshuffle:popularity_tieshuffle sasrec_bce_tieshuffle:popularity_tieshuffle \
           sasrec_tieshuffle:sasrec_bce_tieshuffle \
-  --note "Main dataset: same-day ties shuffled (tie-seed 0). CIs and pairs are from the seed-42 runs." \
+  --note "Main dataset: same-day ties shuffled (tie-seed 0). SASRec CIs and SASRec pairs are from the seed-42 runs; TIGER (one seed, 42; best.pt at step 22k of a run stopped at 100k) is paired with every SASRec seed." \
   --out summary_test_tieshuffle.md
 python scripts/compare_runs.py --runs popularity sasrec sasrec_bce --paper sasrec \
   --pairs sasrec:popularity sasrec_bce:popularity sasrec:sasrec_bce \

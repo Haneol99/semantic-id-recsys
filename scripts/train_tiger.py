@@ -3,6 +3,7 @@
 Usage:
   python scripts/train_tiger.py [--config configs/tiger_tieshuffle.yaml] [--resume]
   python scripts/train_tiger.py --pilot-minutes 15   # time-boxed pilot: results/<run_name>_pilot, no test eval
+  python scripts/train_tiger.py --eval-only --stop-reason manual_stop   # run stopped by hand: evaluate best.pt
 
 For the long run, keep the Mac awake:  caffeinate -i python scripts/train_tiger.py --resume
 """
@@ -27,6 +28,11 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", help="continue from results/<run_name>/last.pt")
     parser.add_argument("--pilot-minutes", type=float, default=None, help="time-boxed pilot without test eval")
     parser.add_argument("--eval-every", type=int, default=None, help="override train.eval_every (e.g. pilot)")
+    parser.add_argument("--max-steps", type=int, default=None,
+                        help="override train.max_steps (the recorded run was stopped at 100k: --max-steps 100000)")
+    parser.add_argument("--eval-only", action="store_true",
+                        help="no training: final valid + test eval of best.pt of a stopped run (state from last.pt)")
+    parser.add_argument("--stop-reason", default="manual_stop", help="recorded with --eval-only")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -34,6 +40,8 @@ def main() -> None:
         config = {**config, "run_name": config["run_name"] + "_pilot"}
     if args.eval_every is not None:
         config = {**config, "train": {**config["train"], "eval_every": args.eval_every}}
+    if args.max_steps is not None:
+        config = {**config, "train": {**config["train"], "max_steps": args.max_steps}}
     set_seed(config["seed"])
     device = get_device()
     out_dir = Path(config["results_dir"]) / config["run_name"]
@@ -54,13 +62,23 @@ def main() -> None:
     print(f"device {device}  params {num_params:,}  vocab {data.tok.vocab_size}  "
           f"train examples {len(data.train_inputs):,}  users {split.num_users:,}", flush=True)
 
-    info = train_tiger(model, data, trie, config["train"], device, out_dir, config["seed"], resume=args.resume,
-                       max_minutes=args.pilot_minutes)
+    import torch
+    if args.eval_only:
+        if (out_dir / "metrics.json").exists():
+            raise SystemExit(f"{out_dir}/metrics.json exists: the test split was already evaluated")
+        state = torch.load(out_dir / "last.pt", map_location="cpu", weights_only=False)["state"]
+        (out_dir / "train_log.json").write_text(json.dumps(state["log"], indent=2))
+        info = {"stop_reason": args.stop_reason, "steps": state["step"], "best_step": state["best_step"],
+                "best_subset_valid_ndcg@10": state["best"], "valid_subset_size": config["train"]["valid_subset_size"],
+                "steps_per_epoch": -(-len(data.train_inputs) // config["train"]["batch_size"]),
+                "train_sec": round(state["train_sec"], 1)}
+    else:
+        info = train_tiger(model, data, trie, config["train"], device, out_dir, config["seed"], resume=args.resume,
+                           max_minutes=args.pilot_minutes)
     print(json.dumps(info, indent=2))
     if args.pilot_minutes is not None:
         return  # pilot: no full valid / test evaluation
 
-    import torch
     model.load_state_dict(torch.load(out_dir / "best.pt", map_location=device))
     users = np.arange(split.num_users)
     results, list_stats = {}, {}

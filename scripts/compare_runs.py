@@ -9,7 +9,7 @@ same users in the same order (user2reviewer in both data dirs' id_maps.json). Ta
 run itself and those seeds. The CI table stays the per-user bootstrap CI of the base run.
 
 Usage:
-  python scripts/compare_runs.py --runs popularity sasrec sasrec_bce --paper sasrec \
+  python scripts/compare_runs.py --runs popularity sasrec sasrec_bce --paper sasrec [tiger] \
       --pairs sasrec:popularity sasrec:sasrec_bce [--seeds 43 44] [--cross-data] [--split test] \
       [--out summary_test.md] [--note TEXT]
 """
@@ -102,7 +102,7 @@ def seed_rows(runs: Runs, run_names: list[str], seeds: list[int], split: str) ->
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", nargs="+", required=True)
-    parser.add_argument("--paper", choices=sorted(PAPER), default=None, help="paper model to compare against")
+    parser.add_argument("--paper", choices=sorted(PAPER), nargs="*", default=[], help="paper models to compare against")
     parser.add_argument("--pairs", nargs="*", default=[], help="run_a:run_b -> paired CI of (a - b)")
     parser.add_argument("--cross-data", action="store_true", help="allow pairs across data dirs, paired by user ID")
     parser.add_argument("--seeds", type=int, nargs="*", default=[], help="extra seeds: runs <run>_seed<N>")
@@ -121,9 +121,8 @@ def main() -> None:
     for run in args.runs:
         m = runs.metrics(run)["splits"][args.split]
         lines.append(f"| {run} | " + " | ".join(fmt_ci(m[k]) for k in METRICS) + " |")
-    if args.paper:
-        ref = PAPER[args.paper]
-        lines.append(f"| *paper {args.paper}* | " + " | ".join(f"{ref[k]:.4f}" for k in METRICS) + " |")
+    for paper in args.paper:
+        lines.append(f"| *paper {paper}* | " + " | ".join(f"{PAPER[paper][k]:.4f}" for k in METRICS) + " |")
 
     if args.seeds:
         rows = seed_rows(runs, args.runs, args.seeds, args.split)
@@ -131,8 +130,9 @@ def main() -> None:
             lines += ["", "Across training seeds: mean ± std (sample std, ddof=1). SASRec training on MPS is not "
                       "bit-for-bit deterministic; seed variation covers that noise.", ""] + table_header() + rows
 
-    if args.paper:
-        lines += ["", f"Relative to paper {args.paper} (single runs above):", ""] + table_header()
+    for paper in args.paper:
+        ref = PAPER[paper]
+        lines += ["", f"Relative to paper {paper} (single runs above):", ""] + table_header()
         for run in args.runs:
             m = runs.metrics(run)["splits"][args.split]
             lines.append(f"| {run} | " + " | ".join(f"{100 * (m[k]['mean'] / ref[k] - 1):+.1f}%" for k in METRICS) + " |")
