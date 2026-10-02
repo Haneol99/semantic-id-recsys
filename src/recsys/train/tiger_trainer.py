@@ -110,8 +110,13 @@ def train_tiger(model, data: TigerData, trie: SemanticIDTrie, cfg: dict, device,
         opt, lambda s: lr_factor(s, cfg["constant_steps"], cfg.get("warmup_steps", 0)))
     n, bs = len(data.train_inputs), cfg["batch_size"]
     steps_per_epoch = math.ceil(n / bs)
-    subset = np.sort(np.random.default_rng(cfg["valid_subset_seed"]).choice(
-        data.split.num_users, size=min(cfg["valid_subset_size"], data.split.num_users), replace=False))
+    eligible = data.split.eval_users("valid")  # all users unless the split excludes some (cold start)
+    if len(eligible) == data.split.num_users:  # same draw as before eval_users existed
+        subset = np.sort(np.random.default_rng(cfg["valid_subset_seed"]).choice(
+            data.split.num_users, size=min(cfg["valid_subset_size"], data.split.num_users), replace=False))
+    else:
+        subset = np.sort(np.random.default_rng(cfg["valid_subset_seed"]).choice(
+            eligible, size=min(cfg["valid_subset_size"], len(eligible)), replace=False))
 
     state = {"step": 0, "best": -1.0, "best_step": 0, "evals_since_best": 0, "log": [], "train_sec": 0.0}
     if resume and (out_dir / "last.pt").exists():

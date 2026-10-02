@@ -171,3 +171,11 @@ def test_eval_logs_distinct_items_and_warns_on_collapse(tmp_path):
     entry = [e for e in ckpt["state"]["log"] if "distinct_items" in e][0]
     assert 1 <= entry["distinct_items"] <= 6 and entry["short_lists"] >= 0
     assert entry["train_steps_per_sec"] > 0
+
+
+def test_trie_restricted_to_items_never_yields_other_items():
+    trie = SemanticIDTrie(SIDS, codebook_size=K, items=np.array([1, 2, 5]))
+    assert sorted(trie.item_of.tolist()) == [1, 2, 5]
+    full = torch.tensor([int("".join(map(str, s)), K) for s in SIDS[1:]])  # base-K keys of items 1..6
+    assert trie.items(full).tolist() == [1, 2, -1, -1, 5, -1]
+    assert trie.allowed_next(0, torch.tensor([0])).tolist() == [[True, False, False, True]]  # first codes 0 and 3

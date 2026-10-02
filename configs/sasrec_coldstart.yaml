@@ -1,0 +1,26 @@
+# Cold start: same settings as configs/sasrec_tieshuffle.yaml (CE, seed 42) on the cold-start split.
+run_name: sasrec_coldstart
+seed: 42
+data_dir: data/processed_coldstart  # main dataset with 5% of test-target items held out of training
+results_dir: results
+bootstrap:
+  n_resamples: 1000
+  seed: 0
+
+model:
+  max_len: 50
+  hidden: 64
+  num_blocks: 2
+  num_heads: 1
+  dropout: 0.2
+
+train:
+  loss: ce  # ce = full softmax over all items; bce = original SASRec (1 sampled negative)
+  lr: 0.001
+  betas: [0.9, 0.98]  # as in the original SASRec implementation
+  weight_decay: 0.0
+  batch_size: 256
+  max_epochs: 200
+  eval_every: 1  # epochs between validation evals
+  early_stop_metric: ndcg@10
+  patience: 10  # evals without improvement

@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 
 @dataclass
 class Split:
@@ -11,6 +13,7 @@ class Split:
     valid: list[int]  # per user: item at position n-2
     test: list[int]  # per user: item at position n-1
     num_items: int  # item IDs are 1..num_items; 0 is padding
+    valid_users: list[int] | None = None  # users used for validation; None = all (cold-start split excludes some)
 
     @property
     def num_users(self) -> int:
@@ -27,9 +30,17 @@ class Split:
     def targets(self, split: str) -> list[int]:
         return {"valid": self.valid, "test": self.test}[split]
 
+    def eval_users(self, split: str) -> np.ndarray:
+        """Users evaluated on `split`: all for test; valid_users (default all) for valid."""
+        if split == "valid" and self.valid_users is not None:
+            return np.asarray(self.valid_users, dtype=np.int64)
+        if split not in ("valid", "test"):
+            raise ValueError(f"unknown split {split!r}")
+        return np.arange(self.num_users)
+
 
 def load_split(processed_dir: str | Path = "data/processed") -> Split:
     processed_dir = Path(processed_dir)
     splits = json.loads((processed_dir / "splits.json").read_text())
     stats = json.loads((processed_dir / "stats.json").read_text())
-    return Split(splits["train"], splits["valid"], splits["test"], stats["num_items"])
+    return Split(splits["train"], splits["valid"], splits["test"], stats["num_items"], splits.get("valid_users"))

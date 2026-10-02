@@ -1,0 +1,41 @@
+# Cold start (paper Sec. 4.3): same settings as configs/tiger_tieshuffle.yaml except data, Semantic IDs, max_steps.
+run_name: tiger_coldstart
+seed: 42
+data_dir: data/processed_coldstart  # main dataset with 5% of test-target items held out of training
+semantic_ids_path: data/processed_coldstart/semantic_ids.json  # RQ-VAE trained on seen items only
+results_dir: results
+bootstrap:
+  n_resamples: 1000
+  seed: 0
+
+tokens:
+  codebook_size: 256
+  num_user_tokens: 2000  # hashed user-ID tokens (paper)
+  max_history: 20  # items (paper)
+
+model:  # paper: 4+4 layers, 6 heads x 64, d_model 128, MLP 1024, dropout 0.1
+  num_layers: 4
+  num_decoder_layers: 4
+  num_heads: 6
+  d_kv: 64
+  d_model: 128
+  d_ff: 1024
+  dropout: 0.1
+
+train:
+  optimizer: adafactor  # paper gives lr/schedule only; Adafactor is the T5 default for lr 0.01 + inverse sqrt
+  scale_parameter: true  # T5 default (relative updates); false collapsed the encoder (STATUS, Phase 3)
+  lr: 0.01
+  warmup_steps: 0  # paper schedule has no warmup
+  constant_steps: 10000  # lr constant, then lr * sqrt(10000 / step)
+  weight_decay: 0.0
+  grad_clip: null
+  batch_size: 256
+  max_steps: 30000  # main run's best was at step 22k (paper: 200k)
+  log_every: 100
+  eval_every: 2000  # steps between subset evals
+  patience: null  # no early stopping: full max_steps as in the paper; best.pt = best subset valid NDCG@10
+  valid_subset_size: 2000  # fixed random valid users for early stopping
+  valid_subset_seed: 0
+  min_distinct_items: 100  # warn if the subset's top-10 lists contain fewer distinct items (collapse check)
+  beam_size: 30  # beam, then drop history items and keep the top 10

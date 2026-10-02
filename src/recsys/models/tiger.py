@@ -32,10 +32,13 @@ class SemanticIDTrie:
     keys[d]: sorted unique keys of the length-d prefixes (keys[0] = [0], the empty prefix)
     allowed[d]: (len(keys[d]), codebook_size) bool, which code may follow each prefix
     item_of: item ID of each full Semantic ID, aligned with keys[num_positions]
+    items: optional item IDs to include (default all 1..N), e.g. only the seen items in the cold-start setting
     """
 
-    def __init__(self, item_sids: np.ndarray, codebook_size: int = 256, device: str | torch.device = "cpu"):
-        sids = np.asarray(item_sids, dtype=np.int64)[1:]  # row 0 = padding
+    def __init__(self, item_sids: np.ndarray, codebook_size: int = 256, device: str | torch.device = "cpu",
+                 items: np.ndarray | None = None):
+        ids = np.arange(1, len(item_sids)) if items is None else np.unique(np.asarray(items, dtype=np.int64))
+        sids = np.asarray(item_sids, dtype=np.int64)[ids]  # row 0 = padding, never included
         self.codebook_size, self.num_positions = codebook_size, sids.shape[1]
         self.keys, self.allowed = [], []
         prefix_keys = np.zeros(len(sids), dtype=np.int64)
@@ -50,7 +53,7 @@ class SemanticIDTrie:
         if len(np.unique(prefix_keys)) != len(prefix_keys):
             raise ValueError("Semantic IDs are not unique")
         self.full_keys = torch.as_tensor(prefix_keys[order], device=device)
-        self.item_of = torch.as_tensor(np.arange(1, len(sids) + 1)[order], device=device)
+        self.item_of = torch.as_tensor(ids[order], device=device)
 
     @staticmethod
     def _lookup(keys: torch.Tensor, query: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:

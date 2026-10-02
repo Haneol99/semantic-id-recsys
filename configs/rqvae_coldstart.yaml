@@ -1,0 +1,31 @@
+# Cold start: same settings as configs/rqvae.yaml; RQ-VAE trained on the seen items only.
+run_name: rqvae_coldstart
+seed: 42
+emb_path: data/processed/item_emb.npy  # Sentence-T5 item embeddings, row = item ID (row 0 = padding, unused)
+results_dir: results
+semantic_ids_path: data/processed_coldstart/semantic_ids.json
+holdout_path: data/processed_coldstart/coldstart.json  # train on seen items only (cold start, paper Sec. 4.3)
+device: cpu  # small MLP: CPU is deterministic (MPS is not) and faster here
+# Deviation from the paper: per-dimension standardization. With raw unit-norm embeddings every setup collapsed.
+input_norm: standardize
+
+model:
+  input_dim: 768
+  hidden_dims: [512, 256, 128]
+  latent_dim: 32
+  levels: 3
+  codebook_size: 256
+  beta: 0.25
+
+train:
+  optimizer: adamw  # deviation: paper uses Adagrad lr 0.4 (collapses here, see configs/rqvae_paper.yaml)
+  lr: 0.001
+  weight_decay: 0.01
+  batch_size: 1024
+  max_epochs: 5000  # deviation: paper trains 20k epochs; we stop on plateau
+  reset_every: 10  # deviation: dead-code reset (epochs between resets)
+  reset_until: 2000  # last epoch with a reset
+  stable_epochs: 1000  # epochs without resets before the run may stop; final codes come from this phase
+  eval_every: 100  # epochs between full-data evals (recon loss, usage, collisions)
+  patience: 5  # evals without progress before stopping (only after reset_until + stable_epochs)
+  min_rel_improvement: 0.01  # progress = recon loss below best * (1 - this), or higher min codebook usage

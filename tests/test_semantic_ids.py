@@ -95,3 +95,13 @@ def test_dead_code_reset_revives_unused_codes_and_standardization():
     n_reset = model.reset_dead_codes(x, torch.Generator().manual_seed(0))
     assert n_reset[0] == 7
     assert codebook_usage(model.encode_codes(x).numpy(), 8)[0] > 1 / 8
+
+
+def test_collision_token_numbers_seen_items_first():
+    from recsys.data.semantic_ids import add_collision_token, build_lookup
+    codes = np.array([[1, 2, 3], [1, 2, 3], [4, 5, 6], [1, 2, 3]])  # items 1..4; items 1, 2, 4 share a prefix
+    assert add_collision_token(codes)[:, -1].tolist() == [0, 1, 0, 2]  # default: item-ID order
+    seen = np.array([False, True, True, True])  # item 1 unseen
+    sids = add_collision_token(codes, seen)
+    assert sids[:, -1].tolist() == [2, 0, 0, 1]  # seen items 2 and 4 get 0 and 1, unseen item 1 comes after
+    assert build_lookup(sids, 8, unseen_items=[1])["unseen_items"] == [1]

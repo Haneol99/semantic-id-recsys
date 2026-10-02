@@ -55,7 +55,9 @@ def main() -> None:
     for item, sid in sids["item_to_sid"].items():
         item_sids[int(item)] = sid
     data = TigerData.build(split, reviewers, item_sids, **config["tokens"])
-    trie = SemanticIDTrie(item_sids, data.tok.codebook_size, device=device)
+    # cold start: decode seen items only (eps = 0); unseen items are retrieved by scripts/eval_coldstart.py
+    seen = np.setdiff1d(np.arange(1, split.num_items + 1), sids.get("unseen_items", []))
+    trie = SemanticIDTrie(item_sids, data.tok.codebook_size, device=device, items=seen)
 
     model = make_tiger(data.tok.vocab_size, **config["model"]).to(device)
     num_params = sum(p.numel() for p in model.parameters())
@@ -80,10 +82,10 @@ def main() -> None:
         return  # pilot: no full valid / test evaluation
 
     model.load_state_dict(torch.load(out_dir / "best.pt", map_location=device))
-    users = np.arange(split.num_users)
     results, list_stats = {}, {}
     for s in ("valid", "test"):  # test is evaluated exactly once, with the best checkpoint
-        means, per_user, list_stats[s] = evaluate_users(model, data, trie, s, users, device, config["train"]["beam_size"])
+        means, per_user, list_stats[s] = evaluate_users(model, data, trie, s, split.eval_users(s), device,
+                                                        config["train"]["beam_size"])
         results[s] = (means, per_user)
     metrics = save_run(out_dir, config, results, config["bootstrap"], extra={
         "device": str(device), "num_params": num_params, **info, "list_stats": list_stats,

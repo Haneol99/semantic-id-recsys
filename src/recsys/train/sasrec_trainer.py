@@ -65,10 +65,12 @@ def sequence_bce_loss(
 
 
 def evaluate_split(model: SASRec, split: Split, name: str, batch_size: int = 1024):
+    """Full-ranking metrics over split.eval_users(name) (all users unless the split excludes some from valid)."""
     model.eval()
-    histories = split.inputs(name)
-    return evaluate(lambda users: model.score([histories[u] for u in users]), histories, split.targets(name),
-                    batch_size=batch_size)
+    users = split.eval_users(name)
+    histories = [split.inputs(name)[u] for u in users]
+    targets = [split.targets(name)[u] for u in users]
+    return evaluate(lambda rows: model.score([histories[r] for r in rows]), histories, targets, batch_size=batch_size)
 
 
 def train_sasrec(model: SASRec, split: Split, cfg: dict, device: torch.device, ckpt_path: Path, seed: int) -> dict:

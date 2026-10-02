@@ -1,6 +1,8 @@
 """Train the RQ-VAE on all item embeddings, then assign Semantic IDs (3 codes + collision token).
 
-Trains on content embeddings of all 12,101 items (no interactions, so no split leakage).
+Trains on content embeddings of all 12,101 items (no interactions, so no split leakage). With `holdout_path`
+(cold start, a coldstart.json with "held_out_items") it trains on the seen items only, then assigns codes to all
+items; seen items get the collision tokens first (see recsys.data.semantic_ids).
 
 Schedule: dead codes are reset every `reset_every` epochs up to epoch `reset_until` (0 = never). Final assignments
 come from at least `stable_epochs` epochs without resets; after that, training stops at max_epochs or when
@@ -54,7 +56,13 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
 
-    x = torch.as_tensor(np.load(config["emb_path"])[1:], dtype=torch.float32, device=device)  # items 1..N
+    x_all = torch.as_tensor(np.load(config["emb_path"])[1:], dtype=torch.float32, device=device)  # items 1..N
+    seen_mask = np.ones(len(x_all), dtype=bool)
+    held_out = None
+    if config.get("holdout_path"):
+        held_out = json.loads(Path(config["holdout_path"]).read_text())["held_out_items"]
+        seen_mask[np.asarray(held_out) - 1] = False
+    x = x_all[torch.as_tensor(seen_mask, device=device)]  # training items
     model = RQVAE(**config["model"]).to(device)
     k = config["model"]["codebook_size"]
     gen = torch.Generator().manual_seed(seed)
@@ -105,12 +113,13 @@ def main() -> None:
     (out_dir / "train_log.json").write_text(json.dumps(log, indent=2))
 
     model.eval()
-    codes = model.encode_codes(x).cpu().numpy()
-    sids = add_collision_token(codes)
+    codes_all = model.encode_codes(x_all).cpu().numpy()
+    codes = codes_all[seen_mask]  # training items: usage and collision stats below
+    sids = add_collision_token(codes_all, seen_mask if held_out is not None else None)
     if sids[:, -1].max() >= k:
         raise ValueError(f"collision group larger than codebook size {k}: 4th token {sids[:, -1].max()}")
     sid_path = Path(config["semantic_ids_path"])
-    save_semantic_ids(sid_path, build_lookup(sids, k))
+    save_semantic_ids(sid_path, build_lookup(sids, k, held_out))
 
     final = log[-1]
     usage = codebook_usage(codes, k)
@@ -124,6 +133,15 @@ def main() -> None:
         **collision_stats(codes),
         "semantic_ids": {"path": str(sid_path), "sha256": file_sha256(sid_path)},
     }
+    if held_out is not None:
+        unseen_codes = codes_all[~seen_mask]
+        seen_prefixes = {tuple(c) for c in codes}
+        metrics["coldstart"] = {
+            "holdout_path": config["holdout_path"], "num_train_items": int(seen_mask.sum()),
+            "num_unseen_items": len(held_out), "codebook_usage_all_items": codebook_usage(codes_all, k),
+            "unseen_items_with_seen_3code_prefix": int(sum(tuple(c) in seen_prefixes for c in unseen_codes)),
+            "unseen_items_with_seen_first_code": int(np.isin(unseen_codes[:, 0], codes[:, 0]).sum()),
+        }
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
     print(json.dumps({k_: v for k_, v in metrics.items() if k_ not in ("data", "semantic_ids")}, indent=2))
 
