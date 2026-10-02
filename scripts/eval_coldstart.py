@@ -294,6 +294,9 @@ def main() -> None:
 
     reference = {}
     for name, run in (("TIGER", args.tiger_run), ("SASRec-CE", args.sasrec_run)):
+        if not (run / "metrics.json").exists():
+            reference[name] = "n/a (no metrics.json)"
+            continue
         t = json.loads((run / "metrics.json").read_text())["splits"]["test"]
         reference[name] = f"R@10 {t['recall@10']['mean']:.4f}, N@10 {t['ndcg@10']['mean']:.4f}"
     gen_unseen = float(np.isin(generated, unseen).mean())
