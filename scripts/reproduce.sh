@@ -29,6 +29,9 @@ python scripts/semantic_id_report.py
 python scripts/train_tiger.py --config configs/tiger_tieshuffle.yaml --max-steps 100000
 python scripts/plot_tiger_eval_curve.py
 
+# Phase 4: bucket and Semantic-ID prefix analysis of the test split (inference only, no training)
+python scripts/analyze_phase4.py
+
 # Sensitivity check (original ASIN tie order; carries the ASIN-order artifact)
 python scripts/run_popularity.py --config configs/popularity.yaml
 python scripts/train_sasrec.py --config configs/sasrec.yaml

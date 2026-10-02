@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER done: stopped by hand at step 100k, best.pt @ 22k evaluated once on valid + test)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER done: stopped by hand at step 100k, best.pt @ 22k evaluated once on valid + test); Phase 4 — Analysis (buckets + Semantic-ID prefix analysis done; cold-start experiment open)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -81,6 +81,26 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - **vs baselines** (paired bootstrap over 22,363 test users, `results/summary_test_tieshuffle.md`): TIGER − Popularity N@10 +0.0270 [+0.0249, +0.0293]. TIGER − SASRec-CE N@10 −0.0150 [−0.0170, −0.0129] (seed 42; −0.0160 / −0.0159 vs seeds 43 / 44; all metrics, all seeds CI < 0). TIGER − SASRec-BCE N@10 +0.0049 [+0.0029, +0.0070] (seed 42; +0.0069 / +0.0067 vs seeds 43 / 44; all metrics, all seeds CI > 0). So TIGER beats the paper-style SASRec (BCE), as in the paper, but not the full-softmax SASRec-CE baseline.
   - **Unexplained slowdown in the collapsed run:** around step 20k training ran at 0.7 steps/s (vs 2.1 before) and the step-20k subset eval took 41.5 s (vs ~15 s). Cause not investigated (other load on the Mac is possible). Every eval now also logs `train_steps_per_sec`: training-only speed since the previous eval, so a slowdown shows within one eval interval.
 
+- **Phase 4 analysis — buckets and Semantic-ID prefixes (2026-10-02; existing runs, inference only, test split, shuffled ties):**
+  - Code: `scripts/analyze_phase4.py`, `src/recsys/eval/analysis.py` (`prefix_depth`), `tests/test_analysis.py` (56 tests pass). Tables: `results/analysis_phase4_test.md`. Plots: `results/analysis/buckets_test.png` (grouped bars per bucket, Recall@10 / NDCG@10, 95% CIs) and `results/analysis/prefix_test.png`; numbers in `results/analysis/phase4_test.json`. The plots and JSON are gitignored like other run outputs.
+  - Method: per-user test metrics from each run's saved `test_*.npy`. SASRec-CE and SASRec-BCE use all three seeds: bucket mean ± std over seeds, and CIs on the per-user mean over seeds. TIGER (one seed) is paired against that per-user mean, 1,000 resamples; how many single-seed pairings agree is also reported. Top-10 lists were recomputed from each run's best.pt and match the saved ranks for 100% of users in all 8 runs.
+  - Buckets:
+    - test-target train interactions: 0–5 (5,114 users, incl. the 64 never-in-train targets), 6–20 (8,620), >20 (8,629);
+    - test history length: 4–5 (11,383), 6–10 (7,433), 11–20 (2,528), >20 (1,019); TIGER reads the last 20 items, SASRec the last 50;
+    - valid/test pair on the same day (9,719) vs different days (12,644).
+  - **TIGER vs SASRec-CE: lower in every bucket** (all paired CIs < 0, 3/3 seeds). Largest gaps: history >20 items (N@10 −0.0425 [−0.0548, −0.0305]) and 6–20-interaction targets, where TIGER is at about half of CE (N@10 0.0140 vs 0.0300).
+  - **TIGER vs SASRec-BCE:**
+    - better for popular targets (>20 interactions: N@10 +0.0188 [+0.0147, +0.0226], R@10 +0.0321), at every history length, and on same-day pairs (N@10 +0.0106) and different-day pairs (+0.0028);
+    - no difference for 6–20 targets (N@10 −0.0006 [−0.0025, +0.0010]);
+    - **worse for rare targets** (0–5: N@10 −0.0036 [−0.0050, −0.0022]; R@10 0.0047 vs BCE 0.0096 vs CE 0.0167).
+  - Rare items are TIGER's weakest bucket here, the opposite of the paper's motivation that shared Semantic-ID codes help rare items. No model hits any of the 64 never-in-train targets.
+  - All models do about 2× better on same-day valid/test pairs than different-day ones.
+  - **Semantic-ID prefixes of missed targets:** the share of missed users whose top 10 holds an item with the target's first code is TIGER 0.163 vs SASRec-CE / BCE 0.153 / 0.153 vs Popularity 0.067 (chance, the same lists against another user's target: 0.031–0.072).
+    - Paired on users both models miss: TIGER +0.0064 [+0.0018, +0.0110] vs CE and +0.0152 [+0.0104, +0.0198] vs BCE.
+    - First 2 codes: TIGER 0.013 vs CE 0.010 (paired +0.0021 [+0.0008, +0.0034]). First 3 codes: ~0.001 for every model.
+    - So TIGER's misses land in the target's coarse code group slightly more often, but near-misses deeper than the first code are rare for every model.
+  - Caveats: one TIGER seed (best.pt at step 22k of a run that later overfit); buckets were chosen after the test split had been evaluated, and the many bucket comparisons have no multiple-comparison correction.
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
@@ -127,4 +147,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
 
 ## Next Step
-- Phase 3 done. Open choices for the owner: (a) more TIGER seeds (each ~3–4 h if stopped near the best step, e.g. `--max-steps 40000`; the single-seed result has no seed variance yet); (b) whether to look into the overfitting (e.g. dropout, weight decay) — would be a further deviation from the paper's setup; (c) Phase 4 (cold-start / bucket analysis) per PROJECT_SPEC.
+- Phase 4 buckets and prefix analysis done. Open choices for the owner: (a) the cold-start experiment (PROJECT_SPEC §6: hold out ~5% of test items from training; needs retraining TIGER and SASRec); (b) more TIGER seeds (each ~3–4 h with `--max-steps 40000`); (c) whether to look into TIGER's overfitting (a further deviation from the paper); (d) Phase 5 README (copy `results/tiger/eval_curve.png`, `results/analysis/*.png`, `results/rqvae/first_code_categories.png` into README assets).
