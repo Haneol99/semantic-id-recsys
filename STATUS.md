@@ -3,7 +3,7 @@
 > Claude Code: update this file at the end of every task — what was done, exact numbers, open issues, next step. Keep entries short.
 
 ## Current Phase
-Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER done: stopped by hand at step 100k, best.pt @ 22k evaluated once on valid + test); Phase 4 — Analysis (buckets + Semantic-ID prefix analysis done; cold-start experiment open)
+Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phase 3 — Generative model (TIGER done: stopped by hand at step 100k, best.pt @ 22k evaluated once on valid + test); Phase 4 — Analysis (buckets, Semantic-ID prefix analysis and cold-start experiment done)
 
 ## Done
 - **1-A scaffold (2026-09-29):** directory layout per spec §8 (empty `__init__.py` in `src/recsys/{data,eval,models,train}`, `tests/`), `.gitignore`, `requirements.txt`, `scripts/check_env.py`.
@@ -101,6 +101,19 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
     - So TIGER's misses land in the target's coarse code group slightly more often, but near-misses deeper than the first code are rare for every model.
   - Caveats: one TIGER seed (best.pt at step 22k of a run that later overfit); buckets were chosen after the test split had been evaluated, and the many bucket comparisons have no multiple-comparison correction.
 
+- **Phase 4 cold-start experiment (paper Sec. 4.3 / Fig. 5; 2026-10-02):**
+  - Code: commits 1e93828 (split, seen-only RQ-VAE, seen-only trie), b6e02ed + 15b5b59 (`scripts/eval_coldstart.py`, `src/recsys/eval/coldstart.py`), and this commit (eval variants below). 65 tests pass. Table: `results/coldstart_test.md`; plot `results/coldstart/fig5_coldstart.png`, numbers `results/coldstart/coldstart_test.json` (gitignored).
+  - **Split** (`data/processed_coldstart`, from the shuffled-ties data, seed 0): 415 items held out = 5% of 8,302 distinct test targets; their 5,649 train interactions (4,720 users) removed. 1,098 / 22,363 test users have an unseen target; 913 users with an unseen valid target are left out of validation (21,450 valid users).
+  - **RQ-VAE on the 11,686 seen items only** (`results/rqvae_coldstart`, same settings as the main run): usage 1.00 / 1.00 / 1.00, recon 0.364, 11,444 unique 3-code prefixes, 2.07% non-zero 4th token. Unseen items get IDs from the trained model: all 415 share their first code with some seen item, but **only 3 / 415 share a full 3-code prefix with a seen item**.
+  - **Runs** (seed 42, MPS, one seed each): `sasrec_coldstart` (CE, best epoch 15; test R@10 0.0807, N@10 0.0477); `tiger_coldstart` (30k steps max, best.pt @ 28k, subset valid N@10 0.0458; full valid R@10 0.0750 / N@10 0.0410; test, seen items only, R@10 0.0576 / N@10 0.0316; 4.1 h).
+  - **Methods** (unseen slots = ceil(eps·K), floor as sensitivity): TIGER = paper method (beam 30 over all items' IDs, unseen items via first-3-code match of generated IDs); TIGER (exact-scored unseen) = labeled variant, the unseen items with the highest exact 4-code TIGER log-prob in the unseen slots; Hybrid = SASRec-CE seen items + Semantic-KNN's top unseen items in the slots; Semantic-KNN = cosine to the last history item's Sentence-T5 embedding (n = 1 picked on valid R@10). Sensitivity: TIGER with 2-/1-code matching.
+  - **Unseen targets (1,098 users), Recall@10, eps 0.1** (one unseen slot): TIGER **0.0000** [0, 0]; TIGER exact-scored 0.0128 [0.0064, 0.0200]; Semantic-KNN 0.0565 [0.0428, 0.0692]; **Hybrid 0.0811** [0.0647, 0.0965]. At eps 0.3: 0.0000 / 0.0319 / 0.0619 / 0.1357. TIGER is 0 at every K and eps, under both slot rules: its beam never generated an unseen item's ID (0.0000% of beam slots), and 3-code matching can only reach the 3 unseen items with a seen prefix.
+  - **Relaxed matching (evaluation only):** 2-code 0.0091, 1-code 0.0191 at eps 0.1; 1-code reaches 0.0847 at eps 0.3, but all-user N@10 drops 0.0316 → 0.0250.
+  - **All test users (cost on seen items):** Hybrid R@10 0.0807 → 0.0804 at eps 0.1 (0.0738 at eps 0.3); TIGER − Hybrid N@10 −0.0160 [−0.0180, −0.0138] at eps 0.1 (CI < 0 at every eps).
+  - **Why TIGER retrieves no unseen item** (teacher-forced per-position log-prob of the target code, final checkpoint, step 30k; diagnosis run in the session, not saved to a results file): unseen targets −5.14 / −7.93 / −12.52 vs seen targets −5.19 / −4.00 / −0.53 for code positions 1–3. The first code is predicted equally well; from the second code on, the model gives unseen items' code combinations very low probability, because it has learned which (code 1, code 2, code 3) combinations exist in training. Generalization through shared codes reaches only the first code.
+  - **The paper's cold-start result (Fig. 5: TIGER retrieves unseen items) is not reproduced.** Content-based retrieval (Semantic-KNN, Hybrid) beats every TIGER variant on unseen targets.
+  - Caveats: one seed per model; TIGER cold-start trained for 30k steps (paper 200k), best.pt at 28k so it may still have been improving; the exact-scored variant and 2-/1-code matching are our additions, not the paper's method; the log-prob diagnosis used the final checkpoint, the evaluation used best.pt (28k).
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
@@ -120,6 +133,8 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 | tiger − sasrec_tieshuffle | test | −0.0182 [−0.0212, −0.0153] | −0.0147 [−0.0167, −0.0125] | −0.0190 [−0.0228, −0.0156] | −0.0150 [−0.0170, −0.0129] | paired, vs CE seed 42 (seeds 43/44 similar, all CI < 0) |
 | tiger − sasrec_bce_tieshuffle | test | +0.0059 [+0.0032, +0.0088] | +0.0039 [+0.0019, +0.0060] | +0.0092 [+0.0054, +0.0128] | +0.0049 [+0.0029, +0.0070] | paired, vs BCE seed 42 (seeds 43/44 larger, all CI > 0) |
 | tiger − popularity_tieshuffle | test | +0.0319 [+0.0290, +0.0349] | +0.0213 [+0.0195, +0.0235] | +0.0496 [+0.0459, +0.0532] | +0.0270 [+0.0249, +0.0293] | paired |
+| sasrec_coldstart | test | 0.0563 | 0.0398 | 0.0807 | 0.0477 | cold-start split, CE, seed 42; seen items only (not comparable to main runs) |
+| tiger_coldstart | test | 0.0380 | 0.0253 | 0.0576 | 0.0316 | cold-start split, best.pt @ 28k of 30k; seen items only. Unseen targets: R@10 0 (see `results/coldstart_test.md`) |
 | *paper SASRec* | test | 0.0387 | 0.0249 | 0.0605 | 0.0318 | reference |
 | *paper TIGER* | test | 0.0454 | 0.0321 | 0.0648 | 0.0384 | reference |
 
@@ -130,6 +145,7 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
   3. *Dead-code reset*: every 10 epochs until epoch 2,000, unused codes at each level move onto random current residuals (240 / 41 / 21 resets in total), followed by ≥1,000 epochs without resets. Final assignments come from this reset-free phase.
   4. *Early stop*: 3,000 epochs (plateau: 5 evals without 1% recon gain or higher min usage) instead of 20k.
   5. *TIGER training stopped at step ~100k of the paper's 200k* (manual stop, overfitting; best checkpoint at 22k). Model selection by NDCG@10 on a fixed 2,000-user valid subset (beam 30) — the paper does not say how it selects checkpoints.
+  6. *Cold-start TIGER trained for 30k steps* (paper 200k), set from the main run's best step (22k). Cold-start RQ-VAE trained on seen items only; validation excludes the 913 users with an unseen valid target.
   - Not deviations, but choices the paper leaves open: Adafactor with parameter scaling (`scale_parameter: true`; the paper gives only lr 0.01 + inverse-sqrt schedule); MSE averaged over dimensions for the reconstruction and RQ terms; CPU training (deterministic); 4th token assigned 0, 1, 2, … in item-ID order within a collision group; purity uses the second category level. The paper settings remain runnable as `configs/rqvae_paper.yaml` (collapses).
 - `data/processed` now also holds `item_emb.{npy,json}` and `semantic_ids.json`, so runs from now on record more files in `data.sha256`. Pairing uses `splits.json`, which is unchanged. Phase 3 reads Semantic IDs from `data/processed/semantic_ids.json` for the shuffled-ties runs too (same item IDs).
 - `results/rqvae/` (model, log, chart) is gitignored like other run outputs; copy the chart into the README assets in Phase 5.
@@ -147,4 +163,4 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 - README must document: history masking, tie-breaking by item ID, Popularity counts from train positions only.
 
 ## Next Step
-- Phase 4 buckets and prefix analysis done. Open choices for the owner: (a) the cold-start experiment (PROJECT_SPEC §6: hold out ~5% of test items from training; needs retraining TIGER and SASRec); (b) more TIGER seeds (each ~3–4 h with `--max-steps 40000`); (c) whether to look into TIGER's overfitting (a further deviation from the paper); (d) Phase 5 README (copy `results/tiger/eval_curve.png`, `results/analysis/*.png`, `results/rqvae/first_code_categories.png` into README assets).
+- Phase 4 done (buckets, prefix analysis, cold start). Open choices for the owner: (a) whether to save the per-position log-prob diagnosis as a script + results file (the numbers above are not in `results/` yet); (b) more TIGER seeds (each ~3–4 h with `--max-steps 40000`); (c) whether to look into TIGER's overfitting (a further deviation from the paper); (d) Phase 5 README (copy `results/tiger/eval_curve.png`, `results/analysis/*.png`, `results/rqvae/first_code_categories.png`, `results/coldstart/fig5_coldstart.png` into README assets).
