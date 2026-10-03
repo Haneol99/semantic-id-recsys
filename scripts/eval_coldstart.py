@@ -44,6 +44,7 @@ from recsys.eval.coldstart import (capped_list, hybrid_list, prefix_keys, recall
 from recsys.models.sasrec import SASRec  # noqa: E402
 from recsys.models.tiger import SemanticIDTrie, constrained_beam_search, make_tiger  # noqa: E402
 from recsys.train.tiger_trainer import TigerData  # noqa: E402
+from recsys.plotting import INK, MODEL_COLORS, SENSITIVITY_COLOR, style_axes  # noqa: E402
 from recsys.utils import get_device  # noqa: E402
 from transformers.modeling_outputs import BaseModelOutput  # noqa: E402
 
@@ -54,8 +55,7 @@ T_EXACT, T2, T1 = "TIGER (exact-scored unseen)", "TIGER (2-code match)", "TIGER 
 METHODS = ["TIGER", T_EXACT, "Hybrid", "Semantic-KNN", T2, T1]
 MAIN = ["TIGER", T_EXACT, "Hybrid", "Semantic-KNN"]
 PAIRS = [("TIGER", "Hybrid"), (T_EXACT, "Hybrid"), ("TIGER", "Semantic-KNN")]
-COLORS = {"TIGER": "tab:blue", T_EXACT: "tab:cyan", "Hybrid": "tab:green", "Semantic-KNN": "tab:purple",
-          T2: "tab:gray", T1: "0.7"}
+COLORS = {**{m: MODEL_COLORS[m] for m in MAIN}, T2: SENSITIVITY_COLOR, T1: SENSITIVITY_COLOR}
 
 
 @torch.no_grad()
@@ -282,9 +282,10 @@ def markdown(res: dict, sens: dict, info: dict, rule: str) -> str:
 
 def plot(res: dict, out: Path, rule: str) -> None:
     """(a) Recall@K vs K on unseen targets (eps 0.1), (b) Recall@10 vs eps on unseen targets, (c, d) all-user
-    Recall@10 / NDCG@10 vs eps. Main methods solid with 95% CI bands; 2-/1-code matching dotted."""
+    Recall@10 / NDCG@10 vs eps. Main methods solid with 95% CI bands; 2-/1-code matching grey dotted / dashed."""
     fig, axes = plt.subplots(1, 4, figsize=(17, 4.4))
-    style = lambda m: dict(ls="-", marker="o", ms=4) if m in MAIN else dict(ls=":", marker=".", ms=3, lw=1)  # noqa: E731
+    sens = {T2: dict(ls=":", marker="^", ms=4, lw=1.2), T1: dict(ls="--", marker="v", ms=4, lw=1.2)}
+    style = lambda m: dict(ls="-", marker="o", ms=4, lw=2) if m in MAIN else sens[m]  # noqa: E731
 
     def curve(ax, xs, cells, m, band=True):
         ax.plot(xs, [c["mean"] for c in cells], color=COLORS[m], label=m, **style(m))
@@ -303,13 +304,13 @@ def plot(res: dict, out: Path, rule: str) -> None:
               ("eps", "NDCG@10", "(d) all test users: NDCG@10")]
     for ax, (xl, yl, t) in zip(axes, titles):
         ax.set(xlabel=xl, ylabel=yl)
-        ax.set_title(t, fontsize=10)
-        ax.grid(alpha=0.3)
-    axes[0].set_title("(a) unseen test targets, eps = 0.1", fontsize=10)
+        ax.set_title(t, fontsize=10, color=INK)
+        style_axes(ax)
+    axes[0].set_title("(a) unseen test targets, eps = 0.1", fontsize=10, color=INK)
     h, lab = axes[0].get_legend_handles_labels()
     fig.legend(h, lab, loc="lower center", ncol=len(METHODS), frameon=False, fontsize=9)
     fig.suptitle(f"Cold-start retrieval (cf. TIGER Fig. 5): unseen slots = {rule}(eps·K); bands = 95% bootstrap CI; "
-                 "dotted = TIGER with 2-/1-code matching (sensitivity)", fontsize=10)
+                 "grey dotted / dashed = TIGER with 2- / 1-code matching (sensitivity)", fontsize=10, color=INK)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     fig.savefig(out, dpi=150)
     plt.close(fig)

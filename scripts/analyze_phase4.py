@@ -39,6 +39,7 @@ from recsys.eval.evaluator import MISS_RANK, filter_ranked  # noqa: E402
 from recsys.models.sasrec import SASRec  # noqa: E402
 from recsys.models.tiger import SemanticIDTrie, constrained_beam_search, make_tiger  # noqa: E402
 from recsys.train.tiger_trainer import TigerData  # noqa: E402
+from recsys.plotting import INK, INK_MUTED, MODEL_COLORS, style_axes  # noqa: E402
 from recsys.utils import get_device  # noqa: E402
 
 DATA_DIR = "data/processed_tieshuffle"
@@ -50,7 +51,7 @@ MODELS = {  # display name -> run names (several = training seeds)
     "TIGER": ["tiger_tieshuffle"],
 }
 METRICS = ["recall@10", "ndcg@10"]
-COLORS = {"Popularity": "0.6", "SASRec-BCE": "tab:orange", "SASRec-CE": "tab:green", "TIGER": "tab:blue"}
+COLORS = {m: MODEL_COLORS[m] for m in MODELS}
 
 
 # ---------------- buckets ----------------
@@ -202,16 +203,17 @@ def plot_buckets(tables: dict, out: Path) -> None:
                 x = np.arange(len(labels)) + (k - (len(models) - 1) / 2) * width
                 means = [c["mean"] for c in cells]
                 err = [[c["mean"] - c["ci_low"] for c in cells], [c["ci_high"] - c["mean"] for c in cells]]
-                ax.bar(x, means, width, yerr=err, capsize=2, color=COLORS[model],
+                ax.bar(x, means, width, yerr=err, capsize=2, color=COLORS[model], edgecolor="white", linewidth=1,
+                       error_kw={"ecolor": INK, "elinewidth": 1},
                        label=model + (" (3 seeds)" if len(MODELS[model]) > 1 else ""))
             ax.set_xticks(np.arange(len(labels)))
             ax.set_xticklabels([f"{b}\n(n={buckets[b]['n']:,})" for b in labels], fontsize=9)
-            ax.set_title(f"{gname}: {m.replace('recall', 'Recall').replace('ndcg', 'NDCG')}", fontsize=10)
-            ax.grid(axis="y", alpha=0.3)
+            ax.set_title(f"{gname}: {m.replace('recall', 'Recall').replace('ndcg', 'NDCG')}", fontsize=10, color=INK)
+            style_axes(ax)
     h, lab = axes[0, 0].get_legend_handles_labels()
     fig.legend(h, lab, loc="upper center", ncol=len(models), frameon=False, bbox_to_anchor=(0.5, 1.0))
     fig.text(0.5, 0.005, "Test split, shuffled ties. Error bars: 95% bootstrap CI over users "
-             "(SASRec: per-user mean over 3 seeds).", ha="center", fontsize=8, color="0.3")
+             "(SASRec: per-user mean over 3 seeds).", ha="center", fontsize=8, color=INK_MUTED)
     fig.tight_layout(rect=(0, 0.02, 1, 0.97))
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150)
@@ -231,14 +233,15 @@ def plot_prefix(prefix: dict, out: Path) -> None:
         chance = [prefix[m]["chance"][f"ge{d}"] for m in models]
         x = np.arange(len(models))
         ax.bar(x, obs, 0.7, color=[COLORS[m] for m in models])
-        ax.scatter(x, chance, marker="_", s=600, color="k", zorder=3, label="chance (other user's target)")
-        for xi, v in zip(x, obs):
-            ax.text(xi, v, share(v), ha="center", va="bottom", fontsize=8)
+        ax.scatter(x, chance, marker="_", s=600, color=INK, zorder=3, label="chance (other user's target)")
+        top = max(obs + chance)
+        for xi, v, c in zip(x, obs, chance):  # label above the bar and its chance mark
+            ax.text(xi, max(v, c) + 0.02 * top, share(v), ha="center", va="bottom", fontsize=8, color=INK)
         ax.set_xticks(x)
         ax.set_xticklabels(models, fontsize=8)
-        ax.set_title(f"shares the target's {name}", fontsize=10)
-        ax.set_ylim(0, max(obs + chance) * 1.2)
-        ax.grid(axis="y", alpha=0.3)
+        ax.set_title(f"shares the target's {name}", fontsize=10, color=INK)
+        ax.set_ylim(0, top * 1.25)
+        style_axes(ax)
     axes[0].set_ylabel("share of missed test users")
     axes[0].legend(frameon=False, fontsize=8, loc="upper left")
     fig.suptitle("Missed targets: does the top-10 list hold an item with the target's Semantic-ID prefix? "

@@ -118,6 +118,9 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
   - **The paper's cold-start result (Fig. 5: TIGER retrieves unseen items) is not reproduced.** Content-based retrieval (Semantic-KNN, Hybrid) beats every TIGER variant on unseen targets.
   - Caveats: one seed per model; TIGER cold-start trained for 30k steps (paper 200k), best.pt at 28k so it may still have been improving; the exact-scored variant and 2-/1-code matching are our additions, not the paper's method.
 
+- **Phase 5 write-up (2026-10-02, in progress):**
+  - **Figures:** one fixed colour per method in every figure (`src/recsys/plotting.py`), from a colour-blind-checked palette. Each figure's set of four passes the colour-vision check on all pairs (TIGER / SASRec-CE / SASRec-BCE / Popularity; cold start: TIGER / TIGER exact-scored / Hybrid / Semantic-KNN); the old tab colours failed (orange vs green ΔE 0.7 under protanopia). Re-plotted with cached model outputs: `analyze_phase4.py` and `eval_coldstart.py` rewrote byte-identical `.md` and `.json` files. `plot_tiger_eval_curve.py` now draws two stacked panels instead of a second y-axis. New `scripts/plot_main_results.py` (test Recall@10 / NDCG@10, 95% CIs, other SASRec seeds, paper lines). The six README figures are copied to `docs/assets/` (committed).
+
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
 |---|---|---|---|---|---|---|
