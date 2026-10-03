@@ -69,6 +69,8 @@ python scripts/compare_runs.py --runs popularity_tieshuffle popularity sasrec_ti
 
 # README figures (docs/assets/ is committed; results/ run outputs are not)
 python scripts/plot_main_results.py
+python scripts/plot_coldstart.py
 mkdir -p docs/assets
 cp results/analysis/main_results_test.png results/analysis/buckets_test.png results/analysis/prefix_test.png \
-   results/coldstart/fig5_coldstart.png results/tiger/eval_curve.png results/rqvae/first_code_categories.png docs/assets/
+   results/tiger/eval_curve.png results/rqvae/first_code_categories.png docs/assets/
+cp results/coldstart/coldstart_readme.png docs/assets/coldstart_test.png

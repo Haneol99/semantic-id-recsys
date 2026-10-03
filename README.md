@@ -1,5 +1,11 @@
 # TIGER, reproduced: generative retrieval with Semantic IDs on Amazon Beauty
 
+**TL;DR**
+- **Reproduced:** TIGER matches the paper's Recall@10 (0.0651 vs 0.0648).
+- **Beaten by a stronger baseline:** SASRec with a full-softmax loss scores Recall@10 0.0859 ± 0.0015 (3 seeds) vs TIGER's 0.0651.
+- **Cold start:** the paper's method retrieves 0 unseen items; a SASRec + Semantic-KNN hybrid reaches Recall@10 0.0811 on those users at almost no cost to everyone else (0.0807 → 0.0804).
+- **Debugging:** three silent failures in training and evaluation diagnosed and fixed: RQ-VAE codebook collapse, a decoder that ignored its encoder, and an MPS memory blow-up during evaluation.
+
 I reimplemented **TIGER** (Rajput et al., *Recommender Systems with Generative Retrieval*, NeurIPS 2023) from scratch and evaluated it on Amazon Beauty alongside Popularity and SASRec, all through one evaluation pipeline: full ranking, 95% bootstrap CIs and paired tests over 22,363 users.
 Items are encoded as **Semantic IDs** (Sentence-T5 → RQ-VAE, 4 tokens), and a T5-style encoder-decoder generates the next item's ID with trie-constrained beam search.
 TIGER matches the paper's Recall@10 and beats SASRec trained as in the paper. It loses to a SASRec trained with full-softmax cross-entropy, is weakest on rare items, and, in the cold-start setup, retrieves none of the unseen items.
@@ -64,7 +70,7 @@ Buckets: train interactions of the test target, length of the user's history, an
 
 ### (c) Cold start: the paper's method retrieves no unseen items
 
-![Cold-start retrieval: Recall@K and Recall@10 by unseen-slot share for TIGER, its variants, the hybrid and Semantic-KNN](docs/assets/fig5_coldstart.png)
+![Cold-start Recall@10 vs the allowed share of unseen items, for users with an unseen target and for all users](docs/assets/coldstart_test.png)
 
 **Setup (paper Sec. 4.3):** 415 items (5% of distinct test targets, seed 0) are removed from all training data. The RQ-VAE, SASRec-CE and TIGER are retrained without them, and the unseen items get Semantic IDs from the trained RQ-VAE. 1,098 of 22,363 test users have an unseen target. `eps` caps the share of the top-K that may be unseen items (`ceil(eps·K)` slots). Source: [`results/coldstart_test.md`](results/coldstart_test.md).
 
@@ -82,7 +88,7 @@ Buckets: train interactions of the test target, length of the user's history, an
 | unseen targets (1,098 users) | −5.14 | −7.93 | −12.52 |
 | seen targets (21,265 users) | −5.24 | −3.94 | −0.53 |
 
-The first code (≈ product category) is predicted as well for unseen items as for seen ones. From the second code on, TIGER has learned *which code combinations exist in training* and gives new combinations almost no probability. Loosening the match to the first code alone (an evaluation-only sensitivity) recovers 0.0191 at eps 0.1, but lowers all-user NDCG@10 from 0.0316 to 0.0278. The hybrid costs almost nothing for everyone else: all-user Recall@10 is 0.0807 at eps 0 and 0.0804 at eps 0.1.
+The first code (≈ product category) is predicted as well for unseen items as for seen ones. From the second code on, TIGER has learned *which code combinations exist in training* and gives new combinations almost no probability. Matching unseen items on fewer codes (an evaluation-only sensitivity, left out of the figure) helps little. Matching the first 2 codes gives Recall@10 0.0091 at eps 0.1 (0.0137 at eps 0.3). Matching the first code alone gives 0.0191 (0.0847 at eps 0.3), but lowers all-user NDCG@10 from 0.0316 to 0.0278 (0.0250 at eps 0.3). The Recall@K curves and all variants are in the source table. The hybrid costs almost nothing for everyone else: all-user Recall@10 is 0.0807 at eps 0 and 0.0804 at eps 0.1.
 
 ### (d) TIGER overfits after step 22k
 
