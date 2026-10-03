@@ -6,10 +6,7 @@
 - **Cold start:** the paper's method retrieves 0 unseen items; a SASRec + Semantic-KNN hybrid reaches Recall@10 0.0811 on those users at almost no cost to everyone else (0.0807 → 0.0804).
 - **Debugging:** three silent failures in training and evaluation diagnosed and fixed: RQ-VAE codebook collapse, a decoder that ignored its encoder, and an MPS memory blow-up during evaluation.
 
-I reimplemented **TIGER** (Rajput et al., *Recommender Systems with Generative Retrieval*, NeurIPS 2023) from scratch and evaluated it on Amazon Beauty alongside Popularity and SASRec, all through one evaluation pipeline: full ranking, 95% bootstrap CIs and paired tests over 22,363 users.
-Items are encoded as **Semantic IDs** (Sentence-T5 → RQ-VAE, 4 tokens), and a T5-style encoder-decoder generates the next item's ID with trie-constrained beam search.
-TIGER matches the paper's Recall@10 and beats SASRec trained as in the paper. It loses to a SASRec trained with full-softmax cross-entropy, is weakest on rare items, and, in the cold-start setup, retrieves none of the unseen items.
-I also traced *why* each gap appears; the key findings follow.
+I reimplemented **TIGER** (Rajput et al., *Recommender Systems with Generative Retrieval*, NeurIPS 2023) from scratch, with **Semantic IDs** (Sentence-T5 → RQ-VAE, 4 tokens) and a T5-style encoder-decoder that generates the next item's ID by trie-constrained beam search, and evaluated it on Amazon Beauty against Popularity and SASRec (full ranking, 95% bootstrap CIs, paired tests over 22,363 users).
 
 - **Reproduction:** TIGER test Recall@10 is **0.0651** (paper 0.0648) and it beats the paper-style SASRec (BCE loss), paired NDCG@10 **+0.0049** [+0.0029, +0.0070]. The same SASRec with a **full-softmax CE loss beats TIGER on every metric** (NDCG@10 −0.0150 [−0.0170, −0.0129]), against all 3 seeds and in every bucket I analysed.
 - **Where TIGER wins and loses:** TIGER beats SASRec-BCE on popular items (>20 train interactions: NDCG@10 +0.0188 [+0.0147, +0.0226]) but is the weakest learned model on rare ones (≤5 interactions: Recall@10 0.0047 vs 0.0096 BCE and 0.0167 CE). This is the opposite of the paper's motivation that shared codes help rare items.
