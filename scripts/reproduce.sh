@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate every Phase 1-3 run and summary table. Run from the repo root in the `recsys` env
+# Regenerate every run, summary table and README figure (Phases 1-5). Run from the repo root in the `recsys` env
 # (pip install -r requirements.txt && pip install -e .).
 #
 # SASRec training on MPS is not bit-for-bit deterministic: a rerun matches the recorded numbers only up to
@@ -32,6 +32,16 @@ python scripts/plot_tiger_eval_curve.py
 # Phase 4: bucket and Semantic-ID prefix analysis of the test split (inference only, no training)
 python scripts/analyze_phase4.py
 
+# Phase 4: cold start (paper Sec. 4.3). Hold out 5% of the distinct test-target items (seed 0) from all training
+# data, retrain the RQ-VAE (seen items only), SASRec-CE (seed 42) and TIGER (30k steps, ~4 h on MPS), then evaluate
+# retrieval of the held-out items and the per-code-position log-prob diagnosis.
+python scripts/make_coldstart.py                                      # -> data/processed_coldstart
+python scripts/train_rqvae.py --config configs/rqvae_coldstart.yaml   # unseen items get IDs from the trained model
+python scripts/train_sasrec.py --config configs/sasrec_coldstart.yaml
+python scripts/train_tiger.py --config configs/tiger_coldstart.yaml
+python scripts/eval_coldstart.py                                      # results/coldstart_test.md, fig5_coldstart.png
+python scripts/diagnose_coldstart_logprob.py                          # results/coldstart_logprob_test.md
+
 # Sensitivity check (original ASIN tie order; carries the ASIN-order artifact)
 python scripts/run_popularity.py --config configs/popularity.yaml
 python scripts/train_sasrec.py --config configs/sasrec.yaml
@@ -56,3 +66,9 @@ python scripts/compare_runs.py --runs popularity_tieshuffle popularity sasrec_ti
   --pairs popularity_tieshuffle:popularity sasrec_tieshuffle:sasrec sasrec_bce_tieshuffle:sasrec_bce \
   --note "Tie order effect: shuffled − original, same model and seed (42), paired by user ID. Test targets differ for 6,554 of 22,363 users. Single training seed per side." \
   --out summary_test_tieorder.md
+
+# README figures (docs/assets/ is committed; results/ run outputs are not)
+python scripts/plot_main_results.py
+mkdir -p docs/assets
+cp results/analysis/main_results_test.png results/analysis/buckets_test.png results/analysis/prefix_test.png \
+   results/coldstart/fig5_coldstart.png results/tiger/eval_curve.png results/rqvae/first_code_categories.png docs/assets/

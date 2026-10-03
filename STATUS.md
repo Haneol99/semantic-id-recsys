@@ -120,6 +120,7 @@ Phase 1 — Foundation (done); Phase 2 — Semantic IDs (done, usage pass); Phas
 
 - **Phase 5 write-up (2026-10-02, in progress):**
   - **Figures:** one fixed colour per method in every figure (`src/recsys/plotting.py`), from a colour-blind-checked palette. Each figure's set of four passes the colour-vision check on all pairs (TIGER / SASRec-CE / SASRec-BCE / Popularity; cold start: TIGER / TIGER exact-scored / Hybrid / Semantic-KNN); the old tab colours failed (orange vs green ΔE 0.7 under protanopia). Re-plotted with cached model outputs: `analyze_phase4.py` and `eval_coldstart.py` rewrote byte-identical `.md` and `.json` files. `plot_tiger_eval_curve.py` now draws two stacked panels instead of a second y-axis. New `scripts/plot_main_results.py` (test Recall@10 / NDCG@10, 95% CIs, other SASRec seeds, paper lines). The six README figures are copied to `docs/assets/` (committed).
+  - **`scripts/reproduce.sh`** now also runs the cold-start steps (split, RQ-VAE, SASRec-CE, TIGER, `eval_coldstart.py`, `diagnose_coldstart_logprob.py`) and rebuilds the README figures. `make_coldstart.py` rebuilt into a scratch dir gives byte-identical files to `data/processed_coldstart` (all 5 files); the training steps were not re-run.
 
 ## Results
 | Run | Split | Recall@5 | NDCG@5 | Recall@10 | NDCG@10 | Notes |
