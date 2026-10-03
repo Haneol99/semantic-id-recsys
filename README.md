@@ -8,10 +8,6 @@
 
 I reimplemented **TIGER** (Rajput et al., *Recommender Systems with Generative Retrieval*, NeurIPS 2023) from scratch, with **Semantic IDs** (Sentence-T5 → RQ-VAE, 4 tokens) and a T5-style encoder-decoder that generates the next item's ID by trie-constrained beam search, and evaluated it on Amazon Beauty against Popularity and SASRec (full ranking, 95% bootstrap CIs, paired tests over 22,363 users).
 
-- **Reproduction:** TIGER test Recall@10 is **0.0651** (paper 0.0648) and it beats the paper-style SASRec (BCE loss), paired NDCG@10 **+0.0049** [+0.0029, +0.0070]. The same SASRec with a **full-softmax CE loss beats TIGER on every metric** (NDCG@10 −0.0150 [−0.0170, −0.0129]), against all 3 seeds and in every bucket I analysed.
-- **Where TIGER wins and loses:** TIGER beats SASRec-BCE on popular items (>20 train interactions: NDCG@10 +0.0188 [+0.0147, +0.0226]) but is the weakest learned model on rare ones (≤5 interactions: Recall@10 0.0047 vs 0.0096 BCE and 0.0167 CE). This is the opposite of the paper's motivation that shared codes help rare items.
-- **Cold start:** with 5% of test items held out of training, the paper's method retrieves **0** of them. TIGER generalizes through the *first* code only: it scores unseen items' later codes as very unlikely (log-prob −12.52 vs −0.53 at code 3). A simple SASRec-CE + Sentence-T5 nearest-neighbour hybrid reaches Recall@10 **0.0811** on those users, for an overall cost of 0.0807 → 0.0804.
-
 ## Key results
 
 Test split, shuffled same-day ties, 22,363 users, full ranking over 12,101 items. Mean [95% bootstrap CI over users] for single runs; mean ± std over seeds 42/43/44 for SASRec. Source: [`results/summary_test_tieshuffle.md`](results/summary_test_tieshuffle.md).
@@ -56,7 +52,7 @@ Buckets: train interactions of the test target, length of the user's history, an
 | >20 | 8,629 | R@10 0.1085 | R@10 0.1639 | R@10 0.1406 | +0.0188 [+0.0147, +0.0226] |
 
 - **TIGER < SASRec-CE in every bucket** (all paired CIs < 0, 3/3 seeds). The largest gap is for users with >20 history items (NDCG@10 −0.0425 [−0.0548, −0.0305]); TIGER reads the last 20 items, SASRec the last 50.
-- **TIGER's advantage over SASRec-BCE comes from popular targets.** It is tied with BCE on 6–20-interaction targets and worse on rare ones. No model retrieves any of the 64 test targets that never appear in training.
+- **TIGER's advantage over SASRec-BCE comes from popular targets.** It is tied with BCE on 6–20-interaction targets and worse on rare ones, the opposite of the paper's motivation that shared codes help rare items. No model retrieves any of the 64 test targets that never appear in training.
 - **Near misses:** when TIGER misses, its top 10 holds an item with the target's first Semantic-ID code for 16.3% of users, vs 15.3% for both SASRec variants. Paired on users that both models miss: +0.0064 [+0.0018, +0.0110] vs CE. Matching the first two codes is rare for every model (TIGER 1.3%, CE 1.0%), so TIGER's misses are slightly more often "right category, wrong item".
 
 <details><summary>Near-miss figure (Semantic-ID prefixes of missed targets)</summary>
